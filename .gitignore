@@ -1,0 +1,20 @@
+node_modules
+dist
+dev-dist
+.env.local
+api/config/config.php
+.DS_Store
+
+# Local-only mock of FieldClock's login — lets the real Login page work
+# against a throwaway test account without hitting production. Never deploy
+# these; api/auth/verify.php (the real Inventory endpoint) is unaffected.
+api/auth/login.php
+api/auth/refresh.php
+api/auth/logout.php
+
+# Uploaded item photos and order attachments (receipt photos / invoice PDFs)
+# — the directory structure + .htaccess stay tracked, actual uploads don't.
+api/uploads/items/*
+!api/uploads/items/.gitkeep
+api/uploads/orders/*
+!api/uploads/orders/.gitkeep

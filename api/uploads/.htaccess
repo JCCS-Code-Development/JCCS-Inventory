@@ -1,0 +1,15 @@
+# Uploaded files are served directly as static images, never executed —
+# defense-in-depth in case a malicious file ever slips past the upload
+# endpoint's mime/extension validation.
+<IfModule mod_php.c>
+    php_flag engine off
+</IfModule>
+<FilesMatch "\.(php|phtml|php\d|phar|pl|py|cgi|asp|aspx|sh|exe)$">
+    <IfModule mod_authz_core.c>
+        Require all denied
+    </IfModule>
+    <IfModule !mod_authz_core.c>
+        Order Deny,Allow
+        Deny from all
+    </IfModule>
+</FilesMatch>
