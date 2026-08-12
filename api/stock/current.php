@@ -21,10 +21,12 @@ $pdo  = getPDO();
 $stmt = $pdo->prepare(
     'SELECT i.id AS item_id, i.sku, i.name, i.unit_of_measure, i.reorder_point, i.image_path,
             i.default_project_id, p.project_number AS default_project_number,
+            i.category_id, c.name AS category_name,
             COALESCE(s.qty_on_hand, 0) AS qty_on_hand
      FROM items i
      LEFT JOIN item_stock s ON s.item_id = i.id AND s.location_id = ?
      LEFT JOIN projects p ON p.id = i.default_project_id
+     LEFT JOIN categories c ON c.id = i.category_id
      WHERE i.is_active = 1
      ORDER BY i.name'
 );

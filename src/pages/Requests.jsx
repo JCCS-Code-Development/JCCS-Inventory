@@ -8,6 +8,7 @@ import Button from '../components/ui/Button'
 import Input from '../components/ui/Input'
 import Badge from '../components/ui/Badge'
 import Spinner from '../components/ui/Spinner'
+import TranslatableText from '../components/ui/TranslatableText'
 import { listRequests, createRequest, resolveRequest, deleteRequest } from '../api/requests'
 import { listOrders } from '../api/orders'
 import { listLocations } from '../api/locations'
@@ -163,23 +164,23 @@ export default function Requests() {
         <Badge variant={badgeVariant[r.status]}>{STATUS_LABELS[r.status]}</Badge>
       </div>
 
-      <p className="text-sm text-gray-800">{r.description}</p>
+      <TranslatableText text={r.description} className="text-sm text-gray-800" />
 
       <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-gray-500">
         {r.qty_requested != null && <span>{t('requests.qtyLabel', { qty: r.qty_requested, unit: r.unit_of_measure || '' })}</span>}
         {r.vendor_hint && <span>{t('requests.vendorHintLabel', { vendor: r.vendor_hint })}</span>}
         {r.location_name && <span>{t('requests.neededAtLabel', { location: r.location_name })}</span>}
       </div>
-      {r.notes && <p className="text-xs text-gray-400 italic">{r.notes}</p>}
+      {r.notes && <TranslatableText text={r.notes} className="text-xs text-gray-400 italic" />}
 
       {r.status === 'ordered' && r.order_number && (
         <p className="text-xs font-semibold text-brand-700">{t('requests.orderedAs', { order: r.order_number })}</p>
       )}
       {r.status === 'declined' && (
-        <p className="text-xs text-gray-500">
-          {t('requests.declinedBy', { name: r.resolved_by_name ?? '—' })}
-          {r.decline_reason ? ` — ${r.decline_reason}` : ''}
-        </p>
+        <div className="text-xs text-gray-500">
+          <p>{t('requests.declinedBy', { name: r.resolved_by_name ?? '—' })}</p>
+          {r.decline_reason && <TranslatableText text={r.decline_reason} className="text-gray-500 italic mt-0.5" />}
+        </div>
       )}
 
       {r.status === 'open' && !isLead && (

@@ -25,6 +25,26 @@ const clearDraft = () => {
   try { localStorage.removeItem(COUNTS_DRAFT_STORAGE_KEY) } catch { /* see above */ }
 }
 
+// Same collapsible-group pattern as Items/Orders — a category at a time is
+// a much easier way to work a shelf than one long undivided list, and
+// collapsing a section you've already finished keeps the rest in view.
+function CategorySection({ title, count, children }) {
+  return (
+    <details open className="group bg-white rounded-2xl border border-gray-100 overflow-hidden">
+      <summary className="cursor-pointer select-none list-none [&::-webkit-details-marker]:hidden px-4 py-3 bg-gray-50 flex items-center justify-between text-sm font-semibold text-gray-700">
+        <span className="flex items-center gap-2">
+          <span className="text-gray-400 inline-block transition-transform group-open:rotate-90">▸</span>
+          {title}
+        </span>
+        <span className="text-xs font-normal text-gray-400">{count}</span>
+      </summary>
+      <div className="border-t border-gray-100 p-3">
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-2 items-start">{children}</div>
+      </div>
+    </details>
+  )
+}
+
 // A physical count, made as easy as possible for someone who's never done
 // inventory before: walk the shelf, check off what you see, only type a
 // number when it's actually different from what the system expected.
@@ -69,7 +89,7 @@ export default function Counts() {
         const saved = draftItems?.[r.item_id]
         return {
           item_id: r.item_id, sku: r.sku, name: r.name, image_url: r.image_url,
-          unit_of_measure: r.unit_of_measure, expected,
+          unit_of_measure: r.unit_of_measure, category_name: r.category_name, expected,
           checked: saved?.checked ?? false, counted: saved?.counted ?? String(expected), notes: saved?.notes ?? '',
         }
       }))
@@ -109,6 +129,23 @@ export default function Counts() {
   const visibleLines = search
     ? lines.filter(l => `${l.sku} ${l.name}`.toLowerCase().includes(search.toLowerCase()))
     : lines
+
+  // Grouped by category, alphabetically, with anything uncategorized
+  // pushed to the end — same convention as Items' category grouping.
+  const uncategorizedLabel = t('items.uncategorized')
+  const groupedLines = (() => {
+    const map = new Map()
+    for (const l of visibleLines) {
+      const key = l.category_name || uncategorizedLabel
+      if (!map.has(key)) map.set(key, [])
+      map.get(key).push(l)
+    }
+    return [...map.entries()].sort(([a], [b]) => {
+      if (a === uncategorizedLabel) return 1
+      if (b === uncategorizedLabel) return -1
+      return a.localeCompare(b)
+    })
+  })()
 
   const checkedLines = lines.filter(l => l.checked)
   const mismatchedLines = checkedLines.filter(l => parseFloat(l.counted || 0) !== l.expected)
@@ -173,17 +210,17 @@ export default function Counts() {
           )}
         </Card>
 
-        <Card>
-          {loading ? (
-            <div className="flex justify-center py-16"><Spinner size="lg" /></div>
-          ) : lines.length === 0 ? (
-            <p className="text-sm text-gray-400 py-10 text-center">{t('counts.nothingTracked')}</p>
-          ) : visibleLines.length === 0 ? (
-            <p className="text-sm text-gray-400 py-8 text-center">{t('items.noItemsMatch')}</p>
-          ) : (
-            <>
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-2 items-start">
-                {visibleLines.map((line) => {
+        {loading ? (
+          <Card><div className="flex justify-center py-16"><Spinner size="lg" /></div></Card>
+        ) : lines.length === 0 ? (
+          <Card><p className="text-sm text-gray-400 py-10 text-center">{t('counts.nothingTracked')}</p></Card>
+        ) : visibleLines.length === 0 ? (
+          <Card><p className="text-sm text-gray-400 py-8 text-center">{t('items.noItemsMatch')}</p></Card>
+        ) : (
+          <div className="flex flex-col gap-3">
+            {groupedLines.map(([categoryName, categoryLines]) => (
+              <CategorySection key={categoryName} title={categoryName} count={categoryLines.length}>
+                {categoryLines.map((line) => {
                   const countedNum = parseFloat(line.counted || 0)
                   const diff = countedNum - line.expected
                   return (
@@ -220,14 +257,14 @@ export default function Counts() {
                     </div>
                   )
                 })}
-              </div>
+              </CategorySection>
+            ))}
 
-              <Button onClick={handleSubmit} loading={saving} fullWidth className="mt-5">
-                {t('counts.saveCounts')}
-              </Button>
-            </>
-          )}
-        </Card>
+            <Button onClick={handleSubmit} loading={saving} fullWidth>
+              {t('counts.saveCounts')}
+            </Button>
+          </div>
+        )}
       </div>
     </div>
   )

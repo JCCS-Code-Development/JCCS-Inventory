@@ -7,6 +7,7 @@ import Modal from '../components/ui/Modal'
 import Input from '../components/ui/Input'
 import Badge from '../components/ui/Badge'
 import Spinner from '../components/ui/Spinner'
+import TranslatableText from '../components/ui/TranslatableText'
 import {
   listOrders, getOrder, createOrder, deleteOrder, closeOrder,
   uploadOrderAttachment, deleteOrderAttachment,
@@ -425,13 +426,13 @@ export default function Orders() {
                         ))}
                       </div>
 
-                      {r.notes && <p className="text-xs text-gray-500 bg-gray-50 rounded-lg px-3 py-2">{r.notes}</p>}
+                      {r.notes && <TranslatableText text={r.notes} className="text-xs text-gray-500 bg-gray-50 rounded-lg px-3 py-2" />}
 
                       {r.status === 'resolved' ? (
                         <div className="flex items-start justify-between gap-2">
                           <div className="text-xs text-gray-500">
                             <p>{t('orders.resolvedBy', { name: r.resolved_by_name ?? '—', date: r.resolved_at ? formatDateTime(r.resolved_at) : '' })}</p>
-                            {r.resolution_notes && <p className="mt-0.5 text-gray-600">{r.resolution_notes}</p>}
+                            {r.resolution_notes && <TranslatableText text={r.resolution_notes} className="mt-0.5 text-gray-600" />}
                           </div>
                           <button type="button" onClick={() => handleReopenDiscrepancy(r.id)} disabled={discrepancySavingId === r.id}
                             className="text-xs font-semibold text-gray-400 hover:text-gray-600 shrink-0 disabled:opacity-50">
@@ -709,7 +710,7 @@ export default function Orders() {
               </div>
             )}
 
-            {detail.notes && <p className="text-sm text-gray-600 bg-gray-50 rounded-xl p-3">{detail.notes}</p>}
+            {detail.notes && <TranslatableText text={detail.notes} className="text-sm text-gray-600 bg-gray-50 rounded-xl p-3" />}
 
             <div className="rounded-xl border border-gray-100 overflow-hidden">
               <table className="w-full text-sm">
