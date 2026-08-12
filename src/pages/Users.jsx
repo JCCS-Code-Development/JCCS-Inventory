@@ -7,6 +7,7 @@ import Input from '../components/ui/Input'
 import Badge from '../components/ui/Badge'
 import Spinner from '../components/ui/Spinner'
 import { listUsers, createUser, updateUser, deactivateUser } from '../api/users'
+import { listEmployees } from '../api/fieldclockAuth'
 import { useAuthStore } from '../store/authStore'
 import { useConfirm } from '../components/ConfirmProvider'
 import { useToast } from '../components/ToastProvider'
@@ -28,15 +29,48 @@ export default function Users() {
   const [saving, setSaving]   = useState(false)
   const [error, setError]     = useState('')
 
+  // "Search FieldClock by name/email" instead of typing a raw ID — only
+  // for creating a new user; editing an existing one never needs it. Loaded
+  // once when the modal opens, not kept fresh in the background.
+  const [employees, setEmployees]           = useState(null) // null = not loaded yet, [] = loaded but empty
+  const [employeesError, setEmployeesError] = useState(false)
+  const [employeeSearch, setEmployeeSearch] = useState('')
+  const [pickedEmployee, setPickedEmployee] = useState(null) // {id, name, email} once chosen
+  const [manualEntry, setManualEntry]       = useState(false) // fallback: type the ID directly
+
   const load = () => {
     setLoading(true)
     listUsers().then(d => setUsers(d.users ?? [])).finally(() => setLoading(false))
   }
   useEffect(load, [])
 
-  const openCreate = () => { setForm(EMPTY); setError(''); setModal('create') }
+  const openCreate = () => {
+    setForm(EMPTY); setError(''); setModal('create')
+    setEmployeeSearch(''); setPickedEmployee(null); setManualEntry(false)
+    setEmployees(null); setEmployeesError(false)
+    listEmployees()
+      .then(d => setEmployees(d.employees ?? []))
+      .catch(() => { setEmployeesError(true); setManualEntry(true) }) // not a FieldClock admin, or FieldClock unreachable — just fall back
+  }
   const openEdit = (u) => { setForm({ fieldclock_user_id: String(u.fieldclock_user_id), name: u.name, role: u.role }); setError(''); setModal(u) }
   const set = (k) => (e) => setForm(f => ({ ...f, [k]: e.target.value }))
+
+  const provisionedIds = new Set(users.map(u => String(u.fieldclock_user_id)))
+  const employeeMatches = !employeeSearch.trim() ? [] : (employees ?? []).filter((emp) => {
+    if (provisionedIds.has(String(emp.id))) return false // already has Inventory access — nothing to pick
+    const q = employeeSearch.trim().toLowerCase()
+    return emp.name.toLowerCase().includes(q) || emp.email.toLowerCase().includes(q)
+  })
+
+  const pickEmployee = (emp) => {
+    setPickedEmployee(emp)
+    setForm(f => ({ ...f, fieldclock_user_id: String(emp.id), name: emp.name }))
+    setEmployeeSearch('')
+  }
+  const clearPickedEmployee = () => {
+    setPickedEmployee(null)
+    setForm(f => ({ ...f, fieldclock_user_id: '', name: '' }))
+  }
 
   const handleSave = async () => {
     if (modal === 'create' && !form.fieldclock_user_id) { setError(t('users.fieldclockIdRequired')); return }
@@ -111,8 +145,58 @@ export default function Users() {
       <Modal isOpen={!!modal} onClose={() => setModal(null)} title={modal === 'create' ? t('users.addUser') : t('users.editUser')}>
         <div className="flex flex-col gap-4">
           {modal === 'create' && (
-            <Input label={t('users.fieldclockUserId')} type="number" value={form.fieldclock_user_id} onChange={set('fieldclock_user_id')}
-              helperText={t('users.fieldclockIdHelper')} />
+            manualEntry ? (
+              <div className="flex flex-col gap-1">
+                <Input label={t('users.fieldclockUserId')} type="number" value={form.fieldclock_user_id} onChange={set('fieldclock_user_id')}
+                  helperText={t('users.fieldclockIdHelper')} />
+                {!employeesError && (
+                  <button type="button" onClick={() => setManualEntry(false)} className="text-xs font-semibold text-brand-500 hover:underline w-fit">
+                    {t('users.searchInstead')}
+                  </button>
+                )}
+              </div>
+            ) : (
+              <div className="flex flex-col gap-1.5">
+                <label className="text-sm font-medium text-gray-700">{t('users.findPerson')}</label>
+                {pickedEmployee ? (
+                  <div className="flex items-center justify-between gap-2 rounded-xl border border-brand-300 bg-brand-50/50 px-4 py-3">
+                    <div className="min-w-0">
+                      <p className="text-sm font-medium text-gray-900 truncate">{pickedEmployee.name}</p>
+                      <p className="text-xs text-gray-500 truncate">{pickedEmployee.email}</p>
+                    </div>
+                    <button type="button" onClick={clearPickedEmployee} className="text-xs font-semibold text-gray-400 hover:text-gray-600 shrink-0">
+                      {t('common.change')}
+                    </button>
+                  </div>
+                ) : (
+                  <>
+                    <input type="text" placeholder={t('users.searchPlaceholder')} value={employeeSearch}
+                      onChange={(e) => setEmployeeSearch(e.target.value)} disabled={employees === null}
+                      className="rounded-xl border border-gray-300 px-4 py-3 text-base outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-100 disabled:bg-gray-50 disabled:text-gray-400" />
+                    {employees === null ? (
+                      <p className="text-xs text-gray-400">{t('users.loadingDirectory')}</p>
+                    ) : employeeSearch.trim() && (
+                      employeeMatches.length === 0 ? (
+                        <p className="text-xs text-gray-400 py-2">{t('users.noMatches')}</p>
+                      ) : (
+                        <div className="flex flex-col gap-1 max-h-48 overflow-y-auto rounded-xl border border-gray-100 p-1.5">
+                          {employeeMatches.map((emp) => (
+                            <button key={emp.id} type="button" onClick={() => pickEmployee(emp)}
+                              className="text-left rounded-lg px-3 py-2 hover:bg-gray-50 transition-colors">
+                              <p className="text-sm font-medium text-gray-900">{emp.name}</p>
+                              <p className="text-xs text-gray-400">{emp.email}</p>
+                            </button>
+                          ))}
+                        </div>
+                      )
+                    )}
+                    <button type="button" onClick={() => setManualEntry(true)} className="text-xs font-semibold text-gray-400 hover:text-gray-600 w-fit">
+                      {t('users.enterIdManually')}
+                    </button>
+                  </>
+                )}
+              </div>
+            )
           )}
           <Input label={t('common.name')} value={form.name} onChange={set('name')} />
           <div className="flex flex-col gap-1">
