@@ -1,7 +1,7 @@
 ---
 deployment:
   tasks:
-    - export DEPLOYPATH=/home/vm3xrrup9tqw/public_html/inventory
+    - export DEPLOYPATH=/home/vm3xrrup9tqw/public_html/jccs-inventory
     - /bin/cp -Rf api/. $DEPLOYPATH/api/
     - /bin/cp -Rf dist/. $DEPLOYPATH/
     - /bin/cp -f /home/vm3xrrup9tqw/secure_backups/inventory-config.php $DEPLOYPATH/api/config/config.php
