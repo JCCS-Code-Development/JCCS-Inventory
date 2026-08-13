@@ -8,14 +8,15 @@ import Input from '../components/ui/Input'
 import Badge from '../components/ui/Badge'
 import Spinner from '../components/ui/Spinner'
 import TranslatableText from '../components/ui/TranslatableText'
+import SearchSelect from '../components/ui/SearchSelect'
 import {
   listOrders, getOrder, createOrder, deleteOrder, closeOrder,
   uploadOrderAttachment, deleteOrderAttachment,
 } from '../api/orders'
 import { listDiscrepancies, resolveDiscrepancy, reopenDiscrepancy } from '../api/discrepancies'
 import { resolveRequest } from '../api/requests'
-import { listVendors } from '../api/vendors'
-import { listItems } from '../api/items'
+import { listVendors, createVendor } from '../api/vendors'
+import { listItems, createItem } from '../api/items'
 import { listLocations } from '../api/locations'
 import { listUsers } from '../api/users'
 import { useAuthStore } from '../store/authStore'
@@ -25,7 +26,11 @@ import { compressImage } from '../utils/compressImage'
 import { useConfirm } from '../components/ConfirmProvider'
 import { useToast } from '../components/ToastProvider'
 
-const EMPTY_LINE = { item_id: '', qty_ordered: '', unit_cost: '' }
+// itemSearch/showCreateItem/newSku/newName are UI-only — never sent to the
+// API (handleCreate builds the payload from item_id/qty_ordered/unit_cost
+// explicitly), just along for the ride on each line's own object so they
+// don't need separate index-keyed state that'd go stale when a line is removed.
+const EMPTY_LINE = { item_id: '', qty_ordered: '', unit_cost: '', itemSearch: '', showCreateItem: false, newSku: '', newName: '' }
 const EMPTY_FORM = {
   order_type: 'online', order_number: '', vendor_id: '', expected_date: '', notes: '',
   invoice_number: '', receipt_number: '', purchased_by_user_id: '', destination_location_id: '',
@@ -167,8 +172,54 @@ export default function Orders() {
   }, [])
   const set = (k) => (e) => setForm(f => ({ ...f, [k]: e.target.value }))
   const setLine = (i, k) => (e) => setLines(ls => ls.map((l, idx) => idx === i ? { ...l, [k]: e.target.value } : l))
+  const updateLine = (i, patch) => setLines(ls => ls.map((l, idx) => idx === i ? { ...l, ...patch } : l))
   const addLine = () => setLines(ls => [...ls, { ...EMPTY_LINE }])
   const removeLine = (i) => setLines(ls => ls.filter((_, idx) => idx !== i))
+
+  // ── Vendor: search-and-create, same idea as the item picker below ──
+  const [vendorSearch, setVendorSearch] = useState('')
+  const [creatingVendor, setCreatingVendor] = useState(false)
+  const selectedVendor = vendors.find(v => String(v.id) === String(form.vendor_id)) || null
+  const vendorMatches = vendorSearch.trim()
+    ? vendors.filter(v => v.name.toLowerCase().includes(vendorSearch.trim().toLowerCase()))
+    : []
+  const vendorExactMatch = vendors.some(v => v.name.toLowerCase() === vendorSearch.trim().toLowerCase())
+  const pickVendor = (v) => { setForm(f => ({ ...f, vendor_id: String(v.id) })); setVendorSearch('') }
+  const clearVendor = () => setForm(f => ({ ...f, vendor_id: '' }))
+  const handleCreateVendor = async () => {
+    const name = vendorSearch.trim()
+    if (!name) return
+    setCreatingVendor(true)
+    try {
+      const { id } = await createVendor({ name })
+      const vendor = { id, name }
+      setVendors(vs => [...vs, vendor])
+      pickVendor(vendor)
+    } catch (err) {
+      toast.error(err?.response?.data?.error ?? t('common.couldNotSave'))
+    } finally { setCreatingVendor(false) }
+  }
+
+  // ── Item, per order line: search-and-create ─────────────────────────
+  const itemMatchesFor = (line) => line.itemSearch.trim()
+    ? items.filter(it => `${it.sku} ${it.name}`.toLowerCase().includes(line.itemSearch.trim().toLowerCase()))
+    : []
+  const pickItem = (i, it) => updateLine(i, { item_id: String(it.id), itemSearch: '', showCreateItem: false })
+  const clearItem = (i) => updateLine(i, { item_id: '' })
+  const handleCreateItemForLine = async (i, line) => {
+    const sku = line.newSku.trim(), name = line.newName.trim()
+    if (!sku || !name) return
+    updateLine(i, { creatingItem: true })
+    try {
+      const { id } = await createItem({ sku, name })
+      const newItem = { id, sku, name, unit_of_measure: 'each' }
+      setItems(its => [...its, newItem])
+      updateLine(i, { item_id: String(id), itemSearch: '', showCreateItem: false, newSku: '', newName: '', creatingItem: false })
+    } catch (err) {
+      toast.error(err?.response?.data?.error ?? t('common.couldNotSave'))
+      updateLine(i, { creatingItem: false })
+    }
+  }
 
   const handleAttachmentPick = async (e) => {
     const file = e.target.files?.[0]
@@ -220,7 +271,7 @@ export default function Orders() {
     if (!checked.length) return
     setLines(ls => {
       const existing = ls.filter((l) => l.item_id || l.qty_ordered) // keep any rows already filled in by hand
-      const added = checked.map((s) => ({ item_id: s.item_id, qty_ordered: s.qty_ordered, unit_cost: '' }))
+      const added = checked.map((s) => ({ ...EMPTY_LINE, item_id: s.item_id, qty_ordered: s.qty_ordered }))
       return existing.length || added.length ? [...existing, ...added] : [{ ...EMPTY_LINE }]
     })
     setOcrSuggestions(null)
@@ -594,11 +645,19 @@ export default function Orders() {
 
           <div className="flex flex-col gap-1">
             <label className="text-sm font-medium text-gray-700">{form.order_type === 'dropoff' ? t('orders.purchasedFrom') : t('orders.vendorOptionalField')}</label>
-            <select value={form.vendor_id} onChange={set('vendor_id')}
-              className="rounded-xl border border-gray-300 px-4 py-3 text-base outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-100">
-              <option value="">{form.order_type === 'dropoff' ? t('orders.selectWhereBought') : t('common.none')}</option>
-              {vendors.map(v => <option key={v.id} value={v.id}>{v.name}</option>)}
-            </select>
+            <SearchSelect
+              selected={selectedVendor ? { id: selectedVendor.id, label: selectedVendor.name } : null}
+              onClear={clearVendor}
+              search={vendorSearch} onSearchChange={setVendorSearch}
+              results={vendorMatches.map(v => ({ id: v.id, label: v.name }))}
+              onPick={(r) => pickVendor(vendors.find(v => v.id === r.id))}
+              placeholder={form.order_type === 'dropoff' ? t('orders.selectWhereBought') : t('orders.searchVendorPlaceholder')}
+              renderCreate={isAdmin && vendorSearch.trim() && !vendorExactMatch && (
+                <Button type="button" variant="secondary" size="sm" loading={creatingVendor} onClick={handleCreateVendor} className="w-fit">
+                  {t('orders.createVendor', { name: vendorSearch.trim() })}
+                </Button>
+              )}
+            />
           </div>
 
           {form.order_type === 'dropoff' ? (
@@ -634,24 +693,60 @@ export default function Orders() {
             </div>
           )}
 
-          <div className="flex flex-col gap-2">
+          <div className="flex flex-col gap-3">
             <label className="text-sm font-medium text-gray-700">{t('orders.lineItems')}</label>
-            {lines.map((line, i) => (
-              <div key={i} className="flex gap-2 items-start">
-                <select value={line.item_id} onChange={setLine(i, 'item_id')}
-                  className="flex-1 min-w-0 rounded-xl border border-gray-300 px-3 py-2.5 text-sm outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-100">
-                  <option value="">{t('orders.selectItemShort')}</option>
-                  {items.map(it => <option key={it.id} value={it.id}>{it.sku} — {it.name}</option>)}
-                </select>
-                <input type="number" step="0.01" placeholder={t('receiving.qty')} value={line.qty_ordered} onChange={setLine(i, 'qty_ordered')}
-                  className="w-24 rounded-xl border border-gray-300 px-3 py-2.5 text-sm outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-100" />
-                <input type="number" step="0.01" placeholder={t('orders.unitDollar')} value={line.unit_cost} onChange={setLine(i, 'unit_cost')}
-                  className="w-24 rounded-xl border border-gray-300 px-3 py-2.5 text-sm outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-100" />
-                {lines.length > 1 && (
-                  <button type="button" onClick={() => removeLine(i)} className="text-red-500 text-sm px-2 py-2.5">✕</button>
-                )}
-              </div>
-            ))}
+            {lines.map((line, i) => {
+              const selectedItem = items.find(it => String(it.id) === String(line.item_id)) || null
+              const itemMatches = itemMatchesFor(line)
+              const itemExactMatch = items.some(it => it.sku.toLowerCase() === line.itemSearch.trim().toLowerCase())
+              return (
+                <div key={i} className="flex flex-col gap-2 rounded-xl border border-gray-100 p-2.5">
+                  <div className="flex items-start gap-2">
+                    <div className="flex-1 min-w-0">
+                      <SearchSelect
+                        selected={selectedItem ? { id: selectedItem.id, label: selectedItem.name, sublabel: selectedItem.sku } : null}
+                        onClear={() => clearItem(i)}
+                        search={line.itemSearch} onSearchChange={(v) => updateLine(i, { itemSearch: v })}
+                        results={itemMatches.map(it => ({ id: it.id, label: it.name, sublabel: it.sku }))}
+                        onPick={(r) => pickItem(i, items.find(it => it.id === r.id))}
+                        placeholder={t('orders.searchItemPlaceholder')}
+                        renderCreate={line.itemSearch.trim() && !itemExactMatch && (
+                          line.showCreateItem ? (
+                            <div className="flex flex-col gap-1.5 p-1">
+                              <input type="text" placeholder={t('common.sku')} value={line.newSku}
+                                onChange={(e) => updateLine(i, { newSku: e.target.value })}
+                                className="rounded-lg border border-gray-300 px-2.5 py-1.5 text-sm outline-none focus:border-brand-500" />
+                              <input type="text" placeholder={t('common.name')} value={line.newName}
+                                onChange={(e) => updateLine(i, { newName: e.target.value })}
+                                className="rounded-lg border border-gray-300 px-2.5 py-1.5 text-sm outline-none focus:border-brand-500" />
+                              <Button type="button" variant="secondary" size="sm" loading={line.creatingItem}
+                                disabled={!line.newSku.trim() || !line.newName.trim()}
+                                onClick={() => handleCreateItemForLine(i, line)} className="w-fit">
+                                {t('orders.createAndUse')}
+                              </Button>
+                            </div>
+                          ) : (
+                            <button type="button" onClick={() => updateLine(i, { showCreateItem: true, newSku: line.itemSearch.trim() })}
+                              className="text-left text-xs font-semibold text-brand-500 hover:underline px-2 py-1.5 w-fit">
+                              {t('orders.createNewItem', { name: line.itemSearch.trim() })}
+                            </button>
+                          )
+                        )}
+                      />
+                    </div>
+                    {lines.length > 1 && (
+                      <button type="button" onClick={() => removeLine(i)} className="text-red-500 text-sm px-2 py-2.5 shrink-0">✕</button>
+                    )}
+                  </div>
+                  <div className="flex gap-2">
+                    <input type="number" step="0.01" placeholder={t('receiving.qty')} value={line.qty_ordered} onChange={setLine(i, 'qty_ordered')}
+                      className="w-24 rounded-xl border border-gray-300 px-3 py-2.5 text-sm outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-100" />
+                    <input type="number" step="0.01" placeholder={t('orders.unitDollar')} value={line.unit_cost} onChange={setLine(i, 'unit_cost')}
+                      className="w-24 rounded-xl border border-gray-300 px-3 py-2.5 text-sm outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-100" />
+                  </div>
+                </div>
+              )
+            })}
             <Button type="button" variant="secondary" size="sm" onClick={addLine} className="w-fit">{t('orders.addLine')}</Button>
           </div>
 
