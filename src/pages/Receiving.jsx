@@ -6,24 +6,33 @@ import Input from '../components/ui/Input'
 import Button from '../components/ui/Button'
 import Badge from '../components/ui/Badge'
 import ScannerLoading from '../components/ui/ScannerLoading'
-import { listItems, lookupItemByBarcode } from '../api/items'
+import SearchSelect from '../components/ui/SearchSelect'
+import { listItems, createItem, lookupItemByBarcode } from '../api/items'
 import { listLocations } from '../api/locations'
-import { listVendors } from '../api/vendors'
+import { listVendors, createVendor } from '../api/vendors'
 import { listOrders, getOrder } from '../api/orders'
 import { receiveStock } from '../api/stock'
 import { createDiscrepancyReport } from '../api/discrepancies'
 import { formatDate } from '../utils/format'
 import { useConfirm } from '../components/ConfirmProvider'
+import { useToast } from '../components/ToastProvider'
 import { useBadgeStore } from '../store/badgeStore'
+import { useAuthStore } from '../store/authStore'
 
 const EMPTY = { item_id: '', location_id: '', qty: '', vendor_id: '', reference: '', notes: '' }
+// itemSearch/showCreateItem/newSku/newName are UI-only, same convention as
+// Orders' order-line picker — never sent to the API, just travel with the
+// row so removing/reordering extra lines can't desync separate index state.
+const EMPTY_EXTRA = { item_id: '', description: '', qty: '', itemSearch: '', showCreateItem: false, newSku: '', newName: '', creatingItem: false }
 const OPEN_STATUSES = ['placed', 'partially_received']
 const BarcodeScanner = lazy(() => import('../components/ui/BarcodeScanner'))
 
 export default function Receiving() {
   const { t } = useTranslation()
   const confirmDialog = useConfirm()
+  const toast = useToast()
   const refreshBadges = useBadgeStore((s) => s.refresh)
+  const isAdmin = useAuthStore((s) => s.user?.role === 'admin')
   const TYPE_LABELS = { online: t('orders.type.online'), dropoff: t('orders.type.dropoff') }
   const STATUS_LABELS = {
     placed: t('orders.status.placed'), partially_received: t('orders.status.partiallyReceived'),
@@ -44,6 +53,17 @@ export default function Receiving() {
   const [error, setError]         = useState('')
   const [success, setSuccess]     = useState('')
   const [scannerOpen, setScannerOpen] = useState(false)
+
+  // Freeform form's single item picker: search + optional inline create.
+  const [itemSearch, setItemSearch]     = useState('')
+  const [showCreateItem, setShowCreateItem] = useState(false)
+  const [newItemSku, setNewItemSku]     = useState('')
+  const [newItemName, setNewItemName]   = useState('')
+  const [creatingItem, setCreatingItem] = useState(false)
+
+  // Freeform form's vendor picker: search + optional inline create (admin-only).
+  const [vendorSearch, setVendorSearch]     = useState('')
+  const [creatingVendor, setCreatingVendor] = useState(false)
 
   // ── Delivery checklist (fulfilling an order) ─────────────────────
   // One row per still-open order line: check it off once you've physically
@@ -162,9 +182,76 @@ export default function Receiving() {
   const toggleChecklistLine = (idx) => setChecklistLines(ls => ls.map((l, i) => i === idx ? { ...l, checked: !l.checked } : l))
   const setChecklistQty = (idx, val) => setChecklistLines(ls => ls.map((l, i) => i === idx ? { ...l, qty: val } : l))
 
-  const addExtraLine = () => setExtraLines(ls => [...ls, { item_id: '', description: '', qty: '' }])
+  const addExtraLine = () => setExtraLines(ls => [...ls, { ...EMPTY_EXTRA }])
   const removeExtraLine = (idx) => setExtraLines(ls => ls.filter((_, i) => i !== idx))
   const setExtraLine = (idx, key, val) => setExtraLines(ls => ls.map((l, i) => i === idx ? { ...l, [key]: val } : l))
+  const updateExtraLine = (idx, patch) => setExtraLines(ls => ls.map((l, i) => i === idx ? { ...l, ...patch } : l))
+
+  // ── Item: search-and-create — used by both the freeform form's single
+  // item field and each "anything extra" line during a checklist. Both
+  // need SKU + name to actually create one, same as Orders' line picker.
+  // The freeform picker searches itemOptions (scoped to the order's own
+  // open lines when fulfilling one, or the full catalog when it's not —
+  // freeform mode always has no order selected, so it's the full catalog
+  // here regardless). "Anything extra" is explicitly for items NOT on the
+  // order, so that one always searches the full catalog, never itemOptions.
+  const itemMatches = (query) => query.trim()
+    ? itemOptions.filter(it => `${it.sku} ${it.name}`.toLowerCase().includes(query.trim().toLowerCase()))
+    : []
+  const extraItemMatches = (query) => query.trim()
+    ? items.filter(it => `${it.sku} ${it.name}`.toLowerCase().includes(query.trim().toLowerCase()))
+    : []
+  const pickFreeformItem = (it) => { setForm(f => ({ ...f, item_id: String(it.id) })); setItemSearch('') }
+  const handleCreateFreeformItem = async () => {
+    const sku = newItemSku.trim(), name = newItemName.trim()
+    if (!sku || !name) return
+    setCreatingItem(true)
+    try {
+      const { id } = await createItem({ sku, name })
+      const newItem = { id, sku, name, unit_of_measure: 'each' }
+      setItems(its => [...its, newItem])
+      setForm(f => ({ ...f, item_id: String(id) }))
+      setItemSearch(''); setShowCreateItem(false); setNewItemSku(''); setNewItemName('')
+    } catch (err) {
+      toast.error(err?.response?.data?.error ?? t('common.couldNotSave'))
+    } finally { setCreatingItem(false) }
+  }
+  const handleCreateExtraItem = async (idx, extra) => {
+    const sku = extra.newSku.trim(), name = extra.newName.trim()
+    if (!sku || !name) return
+    updateExtraLine(idx, { creatingItem: true })
+    try {
+      const { id } = await createItem({ sku, name })
+      const newItem = { id, sku, name, unit_of_measure: 'each' }
+      setItems(its => [...its, newItem])
+      updateExtraLine(idx, { item_id: String(id), itemSearch: '', showCreateItem: false, newSku: '', newName: '', creatingItem: false })
+    } catch (err) {
+      toast.error(err?.response?.data?.error ?? t('common.couldNotSave'))
+      updateExtraLine(idx, { creatingItem: false })
+    }
+  }
+
+  // ── Vendor: search-and-create — freeform form only, admin-only creation
+  // to match the existing vendor-creation permission everywhere else ──
+  const selectedVendor = vendors.find(v => String(v.id) === form.vendor_id) || null
+  const vendorMatches = vendorSearch.trim()
+    ? vendors.filter(v => v.name.toLowerCase().includes(vendorSearch.trim().toLowerCase()))
+    : []
+  const vendorExactMatch = vendors.some(v => v.name.toLowerCase() === vendorSearch.trim().toLowerCase())
+  const pickVendor = (v) => { setForm(f => ({ ...f, vendor_id: String(v.id) })); setVendorSearch('') }
+  const handleCreateVendor = async () => {
+    const name = vendorSearch.trim()
+    if (!name) return
+    setCreatingVendor(true)
+    try {
+      const { id } = await createVendor({ name })
+      const vendor = { id, name }
+      setVendors(vs => [...vs, vendor])
+      pickVendor(vendor)
+    } catch (err) {
+      toast.error(err?.response?.data?.error ?? t('common.couldNotSave'))
+    } finally { setCreatingVendor(false) }
+  }
 
   const handleChecklistSubmit = async () => {
     const toReceive   = checklistLines.filter(l => l.checked)
@@ -277,24 +364,56 @@ export default function Receiving() {
 
               <div className="flex flex-col gap-2">
                 <label className="text-sm font-medium text-gray-700">{t('receiving.anythingExtra')} <span className="text-gray-400 font-normal">{t('receiving.notOnOrderHint')}</span></label>
-                {extraLines.map((extra, i) => (
-                  <div key={i} className="flex flex-col gap-1.5 bg-gray-50 rounded-xl p-2">
-                    <div className="flex gap-2">
-                      <select value={extra.item_id} onChange={(e) => setExtraLine(i, 'item_id', e.target.value)}
-                        className="flex-1 min-w-0 rounded-lg border border-gray-300 px-2 py-1.5 text-sm outline-none focus:border-brand-500">
-                        <option value="">{t('receiving.unidentifiedItem')}</option>
-                        {items.map(it => <option key={it.id} value={it.id}>{it.sku} — {it.name}</option>)}
-                      </select>
-                      <input type="number" step="0.01" placeholder={t('receiving.qty')} value={extra.qty} onChange={(e) => setExtraLine(i, 'qty', e.target.value)}
-                        className="w-16 rounded-lg border border-gray-300 px-2 py-1.5 text-sm outline-none focus:border-brand-500 shrink-0" />
-                      <button type="button" onClick={() => removeExtraLine(i)} className="text-red-500 text-sm px-1 shrink-0">✕</button>
+                {extraLines.map((extra, i) => {
+                  const selectedExtraItem = items.find(it => String(it.id) === String(extra.item_id)) || null
+                  const matches = extraItemMatches(extra.itemSearch)
+                  const exactMatch = items.some(it => it.sku.toLowerCase() === extra.itemSearch.trim().toLowerCase())
+                  return (
+                    <div key={i} className="flex flex-col gap-1.5 bg-gray-50 rounded-xl p-2">
+                      <div className="flex items-start gap-2">
+                        <div className="flex-1 min-w-0">
+                          <SearchSelect
+                            selected={selectedExtraItem ? { id: selectedExtraItem.id, label: selectedExtraItem.name, sublabel: selectedExtraItem.sku } : null}
+                            onClear={() => updateExtraLine(i, { item_id: '' })}
+                            search={extra.itemSearch} onSearchChange={(v) => updateExtraLine(i, { itemSearch: v })}
+                            results={matches.map(it => ({ id: it.id, label: it.name, sublabel: it.sku }))}
+                            onPick={(r) => updateExtraLine(i, { item_id: String(r.id), itemSearch: '', showCreateItem: false })}
+                            placeholder={t('receiving.unidentifiedItem')}
+                            renderCreate={extra.itemSearch.trim() && !exactMatch && (
+                              extra.showCreateItem ? (
+                                <div className="flex flex-col gap-1.5 p-1">
+                                  <input type="text" placeholder={t('common.sku')} value={extra.newSku}
+                                    onChange={(e) => updateExtraLine(i, { newSku: e.target.value })}
+                                    className="rounded-lg border border-gray-300 px-2.5 py-1.5 text-sm outline-none focus:border-brand-500" />
+                                  <input type="text" placeholder={t('common.name')} value={extra.newName}
+                                    onChange={(e) => updateExtraLine(i, { newName: e.target.value })}
+                                    className="rounded-lg border border-gray-300 px-2.5 py-1.5 text-sm outline-none focus:border-brand-500" />
+                                  <Button type="button" variant="secondary" size="sm" loading={extra.creatingItem}
+                                    disabled={!extra.newSku.trim() || !extra.newName.trim()}
+                                    onClick={() => handleCreateExtraItem(i, extra)} className="w-fit">
+                                    {t('orders.createAndUse')}
+                                  </Button>
+                                </div>
+                              ) : (
+                                <button type="button" onClick={() => updateExtraLine(i, { showCreateItem: true, newSku: extra.itemSearch.trim() })}
+                                  className="text-left text-xs font-semibold text-brand-500 hover:underline px-2 py-1.5 w-fit">
+                                  {t('orders.createNewItem', { name: extra.itemSearch.trim() })}
+                                </button>
+                              )
+                            )}
+                          />
+                        </div>
+                        <input type="number" step="0.01" placeholder={t('receiving.qty')} value={extra.qty} onChange={(e) => setExtraLine(i, 'qty', e.target.value)}
+                          className="w-16 rounded-lg border border-gray-300 px-2 py-1.5 text-sm outline-none focus:border-brand-500 shrink-0" />
+                        <button type="button" onClick={() => removeExtraLine(i)} className="text-red-500 text-sm px-1 shrink-0">✕</button>
+                      </div>
+                      {!extra.item_id && (
+                        <input type="text" placeholder={t('receiving.describeIt')} value={extra.description} onChange={(e) => setExtraLine(i, 'description', e.target.value)}
+                          className="rounded-lg border border-gray-300 px-2 py-1.5 text-sm outline-none focus:border-brand-500" />
+                      )}
                     </div>
-                    {!extra.item_id && (
-                      <input type="text" placeholder={t('receiving.describeIt')} value={extra.description} onChange={(e) => setExtraLine(i, 'description', e.target.value)}
-                        className="rounded-lg border border-gray-300 px-2 py-1.5 text-sm outline-none focus:border-brand-500" />
-                    )}
-                  </div>
-                ))}
+                  )
+                })}
                 <Button type="button" variant="secondary" size="sm" onClick={addExtraLine} className="w-fit">{t('receiving.addExtraItem')}</Button>
               </div>
 
@@ -313,14 +432,36 @@ export default function Receiving() {
 
               <div className="flex flex-col gap-1">
                 <label className="text-sm font-medium text-gray-700">{t('common.item')}</label>
-                <div className="flex gap-2">
-                  <select value={form.item_id} onChange={set('item_id')}
-                    className="flex-1 min-w-0 rounded-xl border border-gray-300 px-4 py-3 text-base outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-100">
-                    <option value="">{t('common.selectItem')}</option>
-                    {itemOptions.map(i => (
-                      <option key={i.id} value={i.id}>{i.sku} — {i.name}</option>
-                    ))}
-                  </select>
+                <div className="flex items-start gap-2">
+                  <div className="flex-1 min-w-0">
+                    <SearchSelect
+                      selected={selectedItem ? { id: selectedItem.id, label: selectedItem.name, sublabel: selectedItem.sku } : null}
+                      onClear={() => setForm(f => ({ ...f, item_id: '' }))}
+                      search={itemSearch} onSearchChange={setItemSearch}
+                      results={itemMatches(itemSearch).map(it => ({ id: it.id, label: it.name, sublabel: it.sku }))}
+                      onPick={pickFreeformItem}
+                      placeholder={t('common.selectItem')}
+                      renderCreate={itemSearch.trim() && !itemOptions.some(it => it.sku.toLowerCase() === itemSearch.trim().toLowerCase()) && (
+                        showCreateItem ? (
+                          <div className="flex flex-col gap-1.5 p-1">
+                            <input type="text" placeholder={t('common.sku')} value={newItemSku} onChange={(e) => setNewItemSku(e.target.value)}
+                              className="rounded-lg border border-gray-300 px-2.5 py-1.5 text-sm outline-none focus:border-brand-500" />
+                            <input type="text" placeholder={t('common.name')} value={newItemName} onChange={(e) => setNewItemName(e.target.value)}
+                              className="rounded-lg border border-gray-300 px-2.5 py-1.5 text-sm outline-none focus:border-brand-500" />
+                            <Button type="button" variant="secondary" size="sm" loading={creatingItem}
+                              disabled={!newItemSku.trim() || !newItemName.trim()} onClick={handleCreateFreeformItem} className="w-fit">
+                              {t('orders.createAndUse')}
+                            </Button>
+                          </div>
+                        ) : (
+                          <button type="button" onClick={() => { setShowCreateItem(true); setNewItemSku(itemSearch.trim()) }}
+                            className="text-left text-xs font-semibold text-brand-500 hover:underline px-2 py-1.5 w-fit">
+                            {t('orders.createNewItem', { name: itemSearch.trim() })}
+                          </button>
+                        )
+                      )}
+                    />
+                  </div>
                   <Button type="button" variant="secondary" size="md" onClick={() => setScannerOpen(true)}>
                     📷
                   </Button>
@@ -348,11 +489,19 @@ export default function Receiving() {
 
               <div className="flex flex-col gap-1">
                 <label className="text-sm font-medium text-gray-700">{t('receiving.vendorOptional')}</label>
-                <select value={form.vendor_id} onChange={set('vendor_id')}
-                  className="rounded-xl border border-gray-300 px-4 py-3 text-base outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-100">
-                  <option value="">{t('common.none')}</option>
-                  {vendors.map(v => <option key={v.id} value={v.id}>{v.name}</option>)}
-                </select>
+                <SearchSelect
+                  selected={selectedVendor ? { id: selectedVendor.id, label: selectedVendor.name } : null}
+                  onClear={() => setForm(f => ({ ...f, vendor_id: '' }))}
+                  search={vendorSearch} onSearchChange={setVendorSearch}
+                  results={vendorMatches.map(v => ({ id: v.id, label: v.name }))}
+                  onPick={(r) => pickVendor(vendors.find(v => v.id === r.id))}
+                  placeholder={t('orders.searchVendorPlaceholder')}
+                  renderCreate={isAdmin && vendorSearch.trim() && !vendorExactMatch && (
+                    <Button type="button" variant="secondary" size="sm" loading={creatingVendor} onClick={handleCreateVendor} className="w-fit">
+                      {t('orders.createVendor', { name: vendorSearch.trim() })}
+                    </Button>
+                  )}
+                />
               </div>
 
               <Input label={t('receiving.poReference')} value={form.reference} onChange={set('reference')} />
