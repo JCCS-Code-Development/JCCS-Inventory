@@ -64,7 +64,7 @@ function ItemsTable({ items, canSeeCost, canManage, onEdit, onDeactivate, qtyMap
         <thead>
           <tr className="border-b border-gray-100 bg-gray-50">
             {['', headers.sku, headers.name, headers.category, headers.material, qtyLabel, ...(canSeeCost ? [headers.vendor, headers.unitCost] : []), headers.project, headers.reorderPt, ''].map((h, i) => (
-              <th key={`${h}-${i}`} className="px-4 py-3 text-left text-xs font-semibold text-gray-400 uppercase tracking-wide">{h}</th>
+              <th key={`${h}-${i}`} className={`px-4 py-3 text-left text-xs font-semibold text-gray-400 uppercase tracking-wide ${i === 0 ? 'w-[96px] min-w-[96px]' : ''}`}>{h}</th>
             ))}
           </tr>
         </thead>
@@ -73,11 +73,11 @@ function ItemsTable({ items, canSeeCost, canManage, onEdit, onDeactivate, qtyMap
             const qty = qtyMap ? (qtyMap[it.id] ?? 0) : it.total_qty
             return (
               <tr key={it.id} className="hover:bg-gray-50">
-                <td className="px-4 py-3">
+                <td className="px-4 py-3 w-[96px] min-w-[96px]">
                   {it.image_url ? (
-                    <img src={it.image_url} alt="" className="w-9 h-9 rounded-lg object-cover" />
+                    <img src={it.image_url} alt="" className="w-16 h-16 rounded-xl object-cover shrink-0" style={{ maxWidth: 'none' }} />
                   ) : (
-                    <div className="w-9 h-9 rounded-lg bg-gray-100 flex items-center justify-center text-gray-300 text-sm">📦</div>
+                    <div className="w-16 h-16 rounded-xl bg-gray-100 flex items-center justify-center text-gray-300 text-2xl shrink-0">📦</div>
                   )}
                 </td>
                 <td className="px-4 py-3 font-mono text-xs text-gray-500">{it.sku}</td>

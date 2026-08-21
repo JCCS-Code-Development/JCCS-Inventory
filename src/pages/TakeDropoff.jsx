@@ -7,6 +7,7 @@ import Input from '../components/ui/Input'
 import Button from '../components/ui/Button'
 import Badge from '../components/ui/Badge'
 import ScannerLoading from '../components/ui/ScannerLoading'
+import SearchSelect from '../components/ui/SearchSelect'
 import EstimateNumberField from '../components/ui/EstimateNumberField'
 import { listLocations } from '../api/locations'
 import { getCurrentStock, checkoutStock, checkinStock } from '../api/stock'
@@ -15,6 +16,44 @@ import { useAuthStore } from '../store/authStore'
 
 const EMPTY = { item_id: '', qty: '', project_id: '', taken_by_name: '', notes: '' }
 const BarcodeScanner = lazy(() => import('../components/ui/BarcodeScanner'))
+
+// Strip accents so "codo" still finds "Codo 90°" and typing without the
+// ° matches fine — a lot of this catalog's names come in with Spanish
+// diacritics that a crew member typing from a phone won't bother with.
+const normalize = (s) => (s ?? '').toString().toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '')
+
+// One field's match strength, or null if it's not a match at all.
+// Ranked so an exact/prefix SKU hit always beats a loose name match:
+// exact > starts-with > contains > a whole word starts with it >
+// query's letters appear in order somewhere in the text (typo/partial
+// tolerant — "shrkbte" still finds "SharkBite").
+const fieldScore = (query, text) => {
+  if (!text) return null
+  const q = normalize(query), t = normalize(text)
+  if (!q) return null
+  if (t === q) return 100
+  if (t.startsWith(q)) return 85
+  if (t.includes(q)) return 65
+  if (t.split(/\s+/).some((w) => w.startsWith(q))) return 55
+  let qi = 0
+  for (let i = 0; i < t.length && qi < q.length; i++) if (t[i] === q[qi]) qi++
+  return qi === q.length ? 30 : null
+}
+
+// SKU counts for the most (that's what a lead reads off a bin label),
+// name next, category/"type" a distant third — a category hit alone
+// shouldn't outrank a real name/SKU match.
+const itemMatchScore = (item, query) => {
+  const sku = fieldScore(query, item.sku)
+  const name = fieldScore(query, item.name)
+  const category = fieldScore(query, item.category_name)
+  const weighted = [
+    sku != null ? sku * 1.2 : null,
+    name,
+    category != null ? category * 0.6 : null,
+  ].filter((s) => s != null)
+  return weighted.length ? Math.max(...weighted) : null
+}
 
 export default function TakeDropoff() {
   const { t } = useTranslation()
@@ -27,6 +66,7 @@ export default function TakeDropoff() {
   const [availability, setAvailability] = useState([])
   const [loadingAvail, setLoadingAvail] = useState(false)
   const [form, setForm]           = useState(EMPTY)
+  const [itemSearch, setItemSearch] = useState('')
   const [saving, setSaving]       = useState(false)
   const [error, setError]         = useState('')
   const [success, setSuccess]     = useState('')
@@ -50,13 +90,27 @@ export default function TakeDropoff() {
   const set = (k) => (e) => setForm(f => ({ ...f, [k]: e.target.value }))
   const selectedItem = availability.find(i => String(i.item_id) === form.item_id)
 
-  const switchTab = (t2) => { setTab(t2); setForm(EMPTY); setError(''); setSuccess('') }
+  // Best matches first, capped so the dropdown stays skimmable — see
+  // itemMatchScore above for how sku/name/category are weighted.
+  const itemMatches = (query) => {
+    if (!query.trim()) return []
+    return availability
+      .map((it) => ({ it, score: itemMatchScore(it, query) }))
+      .filter((x) => x.score != null)
+      .sort((a, b) => b.score - a.score)
+      .slice(0, 8)
+      .map((x) => x.it)
+  }
+  const pickItem = (r) => { setForm(f => ({ ...f, item_id: String(r.id) })); setItemSearch('') }
+
+  const switchTab = (t2) => { setTab(t2); setForm(EMPTY); setItemSearch(''); setError(''); setSuccess('') }
 
   const handleScan = async (barcode) => {
     setScannerOpen(false)
     try {
       const item = await lookupItemByBarcode(barcode)
       setForm(f => ({ ...f, item_id: String(item.id) }))
+      setItemSearch('')
     } catch (err) {
       setError(err?.response?.data?.error ?? t('takeDropoff.barcodeNotFound', { barcode }))
     }
@@ -134,16 +188,23 @@ export default function TakeDropoff() {
 
             <div className="flex flex-col gap-1">
               <label className="text-sm font-medium text-gray-700">{t('common.item')}</label>
-              <div className="flex gap-2">
-                <select value={form.item_id} onChange={set('item_id')}
-                  className="flex-1 min-w-0 rounded-xl border border-gray-300 px-4 py-3 text-base outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-100">
-                  <option value="">{t('common.selectItem')}</option>
-                  {availability.map(i => (
-                    <option key={i.item_id} value={i.item_id}>
-                      {i.sku} — {i.name} ({t('takeDropoff.availableQty', { qty: i.qty_on_hand, unit: i.unit_of_measure })})
-                    </option>
-                  ))}
-                </select>
+              <div className="flex gap-2 items-start">
+                <div className="flex-1 min-w-0">
+                  <SearchSelect
+                    selected={selectedItem ? {
+                      id: selectedItem.item_id, label: selectedItem.name,
+                      sublabel: `${selectedItem.sku} — ${t('takeDropoff.availableQty', { qty: selectedItem.qty_on_hand, unit: selectedItem.unit_of_measure })}`,
+                    } : null}
+                    onClear={() => setForm(f => ({ ...f, item_id: '' }))}
+                    search={itemSearch} onSearchChange={setItemSearch}
+                    results={itemMatches(itemSearch).map(i => ({
+                      id: i.item_id, label: i.name,
+                      sublabel: `${i.sku}${i.category_name ? ` · ${i.category_name}` : ''} — ${t('takeDropoff.availableQty', { qty: i.qty_on_hand, unit: i.unit_of_measure })}`,
+                    }))}
+                    onPick={pickItem}
+                    placeholder={t('common.selectItem')}
+                  />
+                </div>
                 {/* Not the shared Button component here — its "secondary"
                     variant forces a solid white bg, which stood out against
                     the select next to it (inputs have no bg override, so
