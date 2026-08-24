@@ -9,7 +9,8 @@ import Input from '../components/ui/Input'
 import Badge from '../components/ui/Badge'
 import Spinner from '../components/ui/Spinner'
 import TranslatableText from '../components/ui/TranslatableText'
-import { listRequests, createRequest, resolveRequest, deleteRequest } from '../api/requests'
+import EstimateNumberField from '../components/ui/EstimateNumberField'
+import { listRequests, createRequest, resolveRequest, updateRequestReview, deleteRequest } from '../api/requests'
 import { listOrders } from '../api/orders'
 import { listLocations } from '../api/locations'
 import { useAuthStore } from '../store/authStore'
@@ -18,11 +19,14 @@ import { formatDateTime } from '../utils/format'
 import { useConfirm } from '../components/ConfirmProvider'
 import { useToast } from '../components/ToastProvider'
 
-const EMPTY = { description: '', qty_requested: '', unit_of_measure: '', vendor_hint: '', location_id: '', notes: '' }
+const EMPTY = { description: '', qty_requested: '', unit_of_measure: '', vendor_hint: '', location_id: '', notes: '', product_link: '' }
 
 // The "I need this ordered" ticket form — shared between the worker's own
-// page and the Inventory Lead's "+ New Request" modal.
-function RequestForm({ form, set, locations, error, saving, onSubmit, t }) {
+// page and the Inventory Lead's "+ New Request" modal. `showReviewFields`
+// only ever comes in true for the Lead's modal — the project + product link
+// are what get pinned down while the Lead and requester sit down together,
+// so a plain worker never sees them here.
+function RequestForm({ form, set, locations, error, saving, onSubmit, t, showReviewFields, onProjectResolved }) {
   return (
     <form onSubmit={onSubmit} className="flex flex-col gap-4">
       <div className="flex flex-col gap-1">
@@ -49,6 +53,15 @@ function RequestForm({ form, set, locations, error, saving, onSubmit, t }) {
       </div>
 
       <Input label={t('requests.anythingElseOptional')} value={form.notes} onChange={set('notes')} />
+
+      {showReviewFields && (
+        <div className="flex flex-col gap-4 pt-2 border-t border-gray-100">
+          <p className="text-xs font-semibold text-gray-500 -mb-1">{t('requests.reviewSectionTitle')}</p>
+          <EstimateNumberField label={t('requests.projectOptional')} onResolved={onProjectResolved} helperText={t('requests.projectHelper')} />
+          <Input label={t('requests.productLinkOptional')} type="url" placeholder={t('requests.productLinkPlaceholder')}
+            value={form.product_link} onChange={set('product_link')} />
+        </div>
+      )}
 
       {error && <p className="text-xs text-red-500">{error}</p>}
       <Button type="submit" loading={saving} fullWidth>{t('requests.submitRequest')}</Button>
@@ -86,6 +99,17 @@ export default function Requests() {
   const [linkOrderId, setLinkOrderId] = useState('')
   const [actingId, setActingId] = useState(null)
 
+  // The resolved project id for the create form (worker page never renders
+  // this field, so it stays unused there) — separate from `form` because
+  // EstimateNumberField reports the resolved project object, not a plain value.
+  const [newRequestProjectId, setNewRequestProjectId] = useState(null)
+
+  // Lead's "review this ticket" inline editor — set/update project + product
+  // link on a request that's already been filed, independent of its status.
+  const [reviewingId, setReviewingId] = useState(null)
+  const [reviewProjectId, setReviewProjectId] = useState(null)
+  const [reviewLink, setReviewLink] = useState('')
+
   const load = () => {
     setLoading(true)
     listRequests(isLead && tab !== 'all' ? { status: tab } : {})
@@ -113,9 +137,11 @@ export default function Requests() {
         vendor_hint: form.vendor_hint || null,
         location_id: form.location_id || null,
         notes: form.notes || null,
+        ...(isLead ? { project_id: newRequestProjectId || null, product_link: form.product_link.trim() || null } : {}),
       })
       toast.success(t('requests.submitted'))
       setForm(EMPTY)
+      setNewRequestProjectId(null)
       setModalOpen(false)
       if (isLead && tab !== 'open' && tab !== 'all') setTab('open')
       else load()
@@ -152,6 +178,23 @@ export default function Requests() {
     finally { setActingId(null) }
   }
 
+  const startReview = (r) => {
+    setReviewingId(r.id)
+    setReviewProjectId(r.project_id ?? null)
+    setReviewLink(r.product_link || '')
+  }
+  const cancelReview = () => { setReviewingId(null); setReviewProjectId(null); setReviewLink('') }
+  const confirmReview = async (r) => {
+    setActingId(r.id)
+    try {
+      await updateRequestReview(r.id, { project_id: reviewProjectId || null, product_link: reviewLink.trim() || null })
+      toast.success(t('requests.detailsSaved'))
+      cancelReview()
+      load()
+    } catch (err) { toast.error(err?.response?.data?.error ?? t('common.couldNotSave')) }
+    finally { setActingId(null) }
+  }
+
   const badgeVariant = { open: 'request_open', ordered: 'request_ordered', declined: 'request_declined' }
 
   const RequestCard = ({ r }) => (
@@ -170,8 +213,35 @@ export default function Requests() {
         {r.qty_requested != null && <span>{t('requests.qtyLabel', { qty: r.qty_requested, unit: r.unit_of_measure || '' })}</span>}
         {r.vendor_hint && <span>{t('requests.vendorHintLabel', { vendor: r.vendor_hint })}</span>}
         {r.location_name && <span>{t('requests.neededAtLabel', { location: r.location_name })}</span>}
+        {r.project_number && <span>{t('requests.projectLabel', { number: r.project_number, name: r.project_name })}</span>}
       </div>
       {r.notes && <TranslatableText text={r.notes} className="text-xs text-gray-400 italic" />}
+      {r.product_link && (
+        <a href={r.product_link} target="_blank" rel="noopener noreferrer" className="text-xs font-semibold text-brand-600 hover:underline w-fit">
+          {t('requests.viewProductLink')}
+        </a>
+      )}
+
+      {isLead && (
+        reviewingId === r.id ? (
+          <div className="flex flex-col gap-3 pt-2 border-t border-gray-100 mt-1">
+            <EstimateNumberField label={t('requests.projectOptional')}
+              initialNumber={r.project_number ?? ''} initialName={r.project_name ?? ''}
+              onResolved={(project) => setReviewProjectId(project ? project.id : null)}
+              helperText={t('requests.projectHelper')} />
+            <Input label={t('requests.productLinkOptional')} type="url" placeholder={t('requests.productLinkPlaceholder')}
+              value={reviewLink} onChange={(e) => setReviewLink(e.target.value)} />
+            <div className="flex gap-2">
+              <Button size="sm" loading={actingId === r.id} onClick={() => confirmReview(r)}>{t('requests.saveDetails')}</Button>
+              <Button size="sm" variant="secondary" onClick={cancelReview}>{t('common.cancel')}</Button>
+            </div>
+          </div>
+        ) : (
+          <button type="button" onClick={() => startReview(r)} className="text-xs font-semibold text-gray-400 hover:text-brand-600 w-fit">
+            {r.project_number || r.product_link ? t('requests.editDetails') : t('requests.reviewDetails')}
+          </button>
+        )
+      )}
 
       {r.status === 'ordered' && r.order_number && (
         <p className="text-xs font-semibold text-brand-700">{t('requests.orderedAs', { order: r.order_number })}</p>
@@ -228,7 +298,7 @@ export default function Requests() {
   return (
     <div className="w-full">
       <PageHeader title={t('requests.title')} subtitle={t(isLead ? 'requests.subtitleLead' : 'requests.subtitleWorker')}
-        actions={isLead && <Button onClick={() => { setForm(EMPTY); setError(''); setModalOpen(true) }}>{t('requests.newRequest')}</Button>} />
+        actions={isLead && <Button onClick={() => { setForm(EMPTY); setNewRequestProjectId(null); setError(''); setModalOpen(true) }}>{t('requests.newRequest')}</Button>} />
 
       <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,26rem)_1fr] gap-6 items-start">
         {!isLead && (
@@ -270,7 +340,8 @@ export default function Requests() {
       </div>
 
       <Modal isOpen={modalOpen} onClose={() => setModalOpen(false)} title={t('requests.newRequest')}>
-        <RequestForm form={form} set={set} locations={locations} error={error} saving={saving} onSubmit={handleSubmit} t={t} />
+        <RequestForm form={form} set={set} locations={locations} error={error} saving={saving} onSubmit={handleSubmit} t={t}
+          showReviewFields={isLead} onProjectResolved={(project) => setNewRequestProjectId(project ? project.id : null)} />
       </Modal>
     </div>
   )

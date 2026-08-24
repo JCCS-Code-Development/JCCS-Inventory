@@ -231,6 +231,12 @@ CREATE TABLE `order_discrepancy_items` (
 -- optional qty/unit/vendor hint) and it's on the Inventory Lead to turn it
 -- into a real order line once they know what to actually buy. order_id is
 -- only set once that happens, closing the loop back to this ticket.
+--
+-- project_id/product_link are filled in by the Inventory Lead, not the
+-- requester — they get set while the two of them sit down together and go
+-- over exactly what's needed: which job it's for, and the specific product
+-- page they agreed on. Enforced server-side (see api/requests/index.php,
+-- item.php), not just by the UI hiding the fields from a basic user.
 CREATE TABLE `order_requests` (
   `id`               INT UNSIGNED  NOT NULL AUTO_INCREMENT,
   `requested_by`     INT UNSIGNED  NOT NULL,
@@ -239,6 +245,8 @@ CREATE TABLE `order_requests` (
   `unit_of_measure`  VARCHAR(30)   NULL,
   `vendor_hint`      VARCHAR(150)  NULL, -- "usually get these from Grainger" — a hint, not a formal vendor link
   `location_id`      INT UNSIGNED  NULL, -- where it's needed, if known
+  `project_id`       INT UNSIGNED  NULL, -- job this is charged/tied to — set at review time
+  `product_link`     VARCHAR(500)  NULL, -- URL to the specific product, agreed on during the review
   `notes`            TEXT          NULL,
   `status`           ENUM('open','ordered','declined') NOT NULL DEFAULT 'open',
   `order_id`         INT UNSIGNED  NULL,
@@ -249,8 +257,10 @@ CREATE TABLE `order_requests` (
   PRIMARY KEY (`id`),
   KEY `idx_requests_requested_by` (`requested_by`),
   KEY `idx_requests_status` (`status`),
+  KEY `idx_requests_project` (`project_id`),
   CONSTRAINT `fk_request_user`     FOREIGN KEY (`requested_by`) REFERENCES `inventory_user_roles` (`fieldclock_user_id`) ON DELETE CASCADE,
   CONSTRAINT `fk_request_location` FOREIGN KEY (`location_id`)  REFERENCES `locations` (`id`)                            ON DELETE SET NULL,
+  CONSTRAINT `fk_request_project`  FOREIGN KEY (`project_id`)   REFERENCES `projects` (`id`)                             ON DELETE SET NULL,
   CONSTRAINT `fk_request_order`    FOREIGN KEY (`order_id`)     REFERENCES `orders` (`id`)                               ON DELETE SET NULL,
   CONSTRAINT `fk_request_resolver` FOREIGN KEY (`resolved_by`)  REFERENCES `inventory_user_roles` (`fieldclock_user_id`) ON DELETE SET NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;

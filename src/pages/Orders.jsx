@@ -14,7 +14,7 @@ import {
   uploadOrderAttachment, deleteOrderAttachment,
 } from '../api/orders'
 import { listDiscrepancies, resolveDiscrepancy, reopenDiscrepancy } from '../api/discrepancies'
-import { resolveRequest } from '../api/requests'
+import { listRequests, resolveRequest, downloadReadyToOrderCsv } from '../api/requests'
 import { listVendors, createVendor } from '../api/vendors'
 import { listItems, createItem } from '../api/items'
 import { listLocations } from '../api/locations'
@@ -82,7 +82,18 @@ export default function Orders() {
   const [users, setUsers]         = useState([])
   const [loading, setLoading]     = useState(true)
 
-  const [tab, setTab] = useState('pending') // 'pending' | 'flagged' | 'closed' | 'all' | 'discrepancies'
+  const [tab, setTab] = useState('pending') // 'ready' | 'pending' | 'flagged' | 'closed' | 'all' | 'discrepancies'
+
+  // ── Ready to Order (reviewed request tickets, still open) ──────────
+  // The worklist the two Inventory Leads actually sit down with on
+  // ordering days (Mon/Wed/Fri) — every open request that's already been
+  // through the review step (see Requests page): project and/or product
+  // link pinned down, just waiting to become a real order.
+  const [readyRequests, setReadyRequests] = useState([])
+  const [readyLoading, setReadyLoading] = useState(false)
+  const [decliningReadyId, setDecliningReadyId] = useState(null)
+  const [declineReadyReason, setDeclineReadyReason] = useState('')
+  const [readyActingId, setReadyActingId] = useState(null)
 
   // ── Discrepancies (missing/extra items found during receiving) ─────
   // Lives here instead of its own page — it's fundamentally order data,
@@ -124,8 +135,15 @@ export default function Orders() {
     setLoading(true)
     listOrders().then(d => setOrders(d.orders ?? [])).finally(() => setLoading(false))
   }
+  const loadReady = () => {
+    setReadyLoading(true)
+    listRequests({ status: 'open', reviewed: 1 })
+      .then(d => setReadyRequests(d.requests ?? []))
+      .finally(() => setReadyLoading(false))
+  }
   useEffect(() => {
     load()
+    loadReady() // fetched up front (not gated on tab) so the tab button can show a live count
     listVendors({ active: 1 }).then(d => setVendors(d.vendors ?? []))
     listItems({ active: 1 }).then(d => setItems(d.items ?? []))
     listLocations({ active: 1 }).then(d => setLocations(d.locations ?? []))
@@ -143,6 +161,22 @@ export default function Orders() {
     if (tab === 'discrepancies') loadDiscrepancies()
     // eslint-disable-next-line react-hooks/exhaustive-deps -- loadDiscrepancies is stable enough for this
   }, [tab, discrepancyStatusFilter])
+  // Re-fetch whenever the Ready tab is (re-)opened, on top of the mount fetch above.
+  useEffect(() => {
+    if (tab === 'ready') loadReady()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tab])
+
+  const startDeclineReady  = (id) => { setDecliningReadyId(id); setDeclineReadyReason('') }
+  const cancelDeclineReady = () => { setDecliningReadyId(null); setDeclineReadyReason('') }
+  const confirmDeclineReady = async (id) => {
+    setReadyActingId(id)
+    try {
+      await resolveRequest(id, { status: 'declined', decline_reason: declineReadyReason.trim() || null })
+      setDecliningReadyId(null); loadReady(); refreshBadges(canRegister)
+    } catch (err) { toast.error(err?.response?.data?.error ?? t('common.couldNotSave')) }
+    finally { setReadyActingId(null) }
+  }
 
   const openCreate = () => {
     setForm(EMPTY_FORM)
@@ -152,21 +186,30 @@ export default function Orders() {
     setError(''); setFromRequest(null); setCreateOpen(true)
   }
 
-  // Arrived via "Create Order" on a request ticket (Requests page) — jump
-  // straight into the create form with what was asked for already noted
-  // down, instead of making the Lead retype it.
-  useEffect(() => {
-    const req = routerLocation.state?.fromRequest
-    if (!req || !canRegister) return
+  // Jumps straight into the create form with what was asked for already
+  // noted down, instead of making the Lead retype it — shared by both the
+  // "Create Order" button on a request ticket (Requests page, arrives via
+  // router state below) and the Ready to Order tab's own "Create Order"
+  // button (called directly, already being on this page).
+  const startFromRequest = (req) => {
     openCreate()
     const parts = [t('requests.orderNotePrefillLead', { name: req.requested_by_name ?? t('requests.unknownRequester') })]
     parts.push(req.qty_requested != null
       ? t('requests.qtyLabel', { qty: req.qty_requested, unit: req.unit_of_measure || '' }) + ' — ' + req.description
       : req.description)
     if (req.vendor_hint) parts.push(t('requests.vendorHintLabel', { vendor: req.vendor_hint }))
+    if (req.project_number) parts.push(t('requests.projectLabel', { number: req.project_number, name: req.project_name }))
+    if (req.product_link) parts.push(req.product_link)
     if (req.notes) parts.push(req.notes)
     setForm(f => ({ ...f, notes: parts.join('\n') }))
     setFromRequest(req)
+  }
+
+  // Arrived via "Create Order" on a request ticket from the Requests page.
+  useEffect(() => {
+    const req = routerLocation.state?.fromRequest
+    if (!req || !canRegister) return
+    startFromRequest(req)
     navigate(routerLocation.pathname, { replace: true, state: null })
     // eslint-disable-next-line react-hooks/exhaustive-deps -- run once on arrival only
   }, [])
@@ -410,20 +453,92 @@ export default function Orders() {
   return (
     <div className="w-full">
       <PageHeader title={t('orders.title')} subtitle={t('orders.subtitle')}
-        actions={canRegister && tab !== 'discrepancies' && <Button onClick={openCreate}>{t('orders.newOrder')}</Button>} />
+        actions={
+          <div className="flex gap-2">
+            {tab === 'ready' && readyRequests.length > 0 && (
+              <Button variant="secondary" onClick={downloadReadyToOrderCsv}>{t('reports.exportCsv')}</Button>
+            )}
+            {canRegister && tab !== 'discrepancies' && <Button onClick={openCreate}>{t('orders.newOrder')}</Button>}
+          </div>
+        } />
 
       <div className="flex gap-2 mb-4 flex-wrap">
-        {[['pending', t('orders.tabPending')], ['flagged', t('orders.tabFlagged')], ['closed', t('orders.tabClosed')], ['all', t('orders.tabAll')], ['discrepancies', t('orders.tabDiscrepancies')]].map(([val, label]) => (
+        {[['ready', t('orders.tabReady')], ['pending', t('orders.tabPending')], ['flagged', t('orders.tabFlagged')], ['closed', t('orders.tabClosed')], ['all', t('orders.tabAll')], ['discrepancies', t('orders.tabDiscrepancies')]].map(([val, label]) => (
           <button key={val} type="button" onClick={() => setTab(val)}
-            className={`px-4 py-2 rounded-xl text-sm font-semibold transition-colors ${
+            className={`px-4 py-2 rounded-xl text-sm font-semibold transition-colors flex items-center gap-1.5 ${
               tab === val ? 'bg-brand-500 text-white' : 'bg-white border border-gray-200 text-gray-600 hover:border-gray-300'
             }`}>
             {label}
+            {val === 'ready' && readyRequests.length > 0 && (
+              <span className={`inline-flex items-center justify-center min-w-[1.25rem] h-5 px-1 rounded-full text-xs font-bold ${
+                tab === 'ready' ? 'bg-white/25 text-white' : 'bg-brand-500 text-white'
+              }`}>
+                {readyRequests.length}
+              </span>
+            )}
           </button>
         ))}
       </div>
 
-      {tab === 'discrepancies' ? (
+      {tab === 'ready' ? (
+        <>
+          <p className="text-xs text-gray-500 px-1 pb-3">{t('orders.readyHint')}</p>
+          {readyLoading ? (
+            <div className="flex justify-center py-16"><Spinner size="lg" /></div>
+          ) : readyRequests.length === 0 ? (
+            <div className="bg-white rounded-2xl border border-gray-100 overflow-hidden">
+              <p className="text-center text-gray-400 py-16 text-sm">{t('orders.nothingReady')}</p>
+            </div>
+          ) : (
+            <div className="flex flex-col gap-3">
+              {readyRequests.map((r) => (
+                <div key={r.id} className="rounded-2xl border border-gray-100 bg-white p-4 flex flex-col gap-2.5">
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="min-w-0">
+                      <p className="text-sm font-semibold text-gray-900">{r.requested_by_name ?? t('requests.unknownRequester')}</p>
+                      <p className="text-xs text-gray-400">{formatDateTime(r.created_at)}</p>
+                    </div>
+                  </div>
+
+                  <TranslatableText text={r.description} className="text-sm text-gray-800" />
+
+                  <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-gray-500">
+                    {r.qty_requested != null && <span>{t('requests.qtyLabel', { qty: r.qty_requested, unit: r.unit_of_measure || '' })}</span>}
+                    {r.vendor_hint && <span>{t('requests.vendorHintLabel', { vendor: r.vendor_hint })}</span>}
+                    {r.location_name && <span>{t('requests.neededAtLabel', { location: r.location_name })}</span>}
+                    {r.project_number && <span>{t('requests.projectLabel', { number: r.project_number, name: r.project_name })}</span>}
+                  </div>
+                  {r.notes && <TranslatableText text={r.notes} className="text-xs text-gray-400 italic" />}
+                  {r.product_link && (
+                    <a href={r.product_link} target="_blank" rel="noopener noreferrer" className="text-xs font-semibold text-brand-600 hover:underline w-fit">
+                      {t('requests.viewProductLink')}
+                    </a>
+                  )}
+
+                  <div className="flex flex-col gap-2 pt-1 border-t border-gray-100 mt-1">
+                    {decliningReadyId === r.id ? (
+                      <div className="flex flex-col gap-2">
+                        <input type="text" placeholder={t('requests.declineReasonPlaceholder')} value={declineReadyReason}
+                          onChange={(e) => setDeclineReadyReason(e.target.value)}
+                          className="rounded-lg border border-gray-300 px-3 py-1.5 text-xs outline-none focus:border-brand-500" />
+                        <div className="flex gap-2">
+                          <Button size="sm" variant="danger" loading={readyActingId === r.id} onClick={() => confirmDeclineReady(r.id)}>{t('requests.confirmDecline')}</Button>
+                          <Button size="sm" variant="secondary" onClick={cancelDeclineReady}>{t('common.cancel')}</Button>
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="flex flex-wrap gap-2">
+                        <Button size="sm" onClick={() => startFromRequest(r)}>{t('requests.createOrder')}</Button>
+                        <button type="button" onClick={() => startDeclineReady(r.id)} className="text-xs font-semibold text-gray-400 hover:text-red-500 px-2">{t('requests.decline')}</button>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </>
+      ) : tab === 'discrepancies' ? (
         <>
           <div className="flex gap-2 mb-4">
             {[['open', t('common.open')], ['resolved', t('common.resolved')], ['', t('orders.tabAll')]].map(([val, label]) => (
