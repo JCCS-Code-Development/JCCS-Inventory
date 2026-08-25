@@ -9,6 +9,8 @@ import Badge from '../components/ui/Badge'
 import Spinner from '../components/ui/Spinner'
 import TranslatableText from '../components/ui/TranslatableText'
 import SearchSelect from '../components/ui/SearchSelect'
+import LinkPreviewCard from '../components/ui/LinkPreviewCard'
+import Tag from '../components/ui/Tag'
 import {
   listOrders, getOrder, createOrder, deleteOrder, closeOrder,
   uploadOrderAttachment, deleteOrderAttachment,
@@ -64,10 +66,10 @@ export default function Orders() {
   const toast = useToast()
   const refreshBadges = useBadgeStore((s) => s.refresh)
 
-  // Arrived here via "Create Order" on a worker's request ticket — prefill
-  // the notes with what they asked for, and once the order is actually
-  // saved, close the loop by marking that ticket fulfilled.
-  const [fromRequest, setFromRequest] = useState(null)
+  // Arrived here via "Create Order" on one or more request tickets — prefill
+  // the notes with what was asked for, and once the order is actually
+  // saved, close the loop by marking every one of those tickets fulfilled.
+  const [fromRequests, setFromRequests] = useState([])
 
   const STATUS_LABELS = {
     placed: t('orders.status.placed'), partially_received: t('orders.status.partiallyReceived'),
@@ -94,6 +96,15 @@ export default function Orders() {
   const [decliningReadyId, setDecliningReadyId] = useState(null)
   const [declineReadyReason, setDeclineReadyReason] = useState('')
   const [readyActingId, setReadyActingId] = useState(null)
+  // Checkbox multi-select — combine several tickets into a single order
+  // instead of one order per request. A set of request ids.
+  const [selectedReady, setSelectedReady] = useState(new Set())
+  const toggleReadySelect = (id) => setSelectedReady(prev => {
+    const next = new Set(prev)
+    next.has(id) ? next.delete(id) : next.add(id)
+    return next
+  })
+  const createOrderForSelected = () => startFromRequests(readyRequests.filter(r => selectedReady.has(r.id)))
 
   // ── Discrepancies (missing/extra items found during receiving) ─────
   // Lives here instead of its own page — it's fundamentally order data,
@@ -164,6 +175,7 @@ export default function Orders() {
   // Re-fetch whenever the Ready tab is (re-)opened, on top of the mount fetch above.
   useEffect(() => {
     if (tab === 'ready') loadReady()
+    else setSelectedReady(new Set()) // don't carry a stale selection back in from another tab
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tab])
 
@@ -183,28 +195,33 @@ export default function Orders() {
     setLines([{ ...EMPTY_LINE }])
     setPendingAttachment(null); setAttachmentKind(null); setAttachmentPreviewUrl(null); setAttachmentFileName(''); setAttachmentError('')
     setOcrRunning(false); setOcrError(''); setOcrSuggestions(null)
-    setError(''); setFromRequest(null); setCreateOpen(true)
+    setError(''); setFromRequests([]); setCreateOpen(true)
   }
 
   // Jumps straight into the create form with what was asked for already
-  // noted down, instead of making the Lead retype it — shared by both the
-  // "Create Order" button on a request ticket (Requests page, arrives via
-  // router state below) and the Ready to Order tab's own "Create Order"
-  // button (called directly, already being on this page).
-  const startFromRequest = (req) => {
+  // noted down, instead of making the Lead retype it — shared by the
+  // "Create Order" button on a single request ticket (Requests page,
+  // arrives via router state below), the Ready to Order tab's own per-row
+  // button, and its checkbox-driven "combine into one order" action. Every
+  // request handed in gets resolved to the same order once it's saved.
+  const startFromRequests = (reqs) => {
     openCreate()
-    const parts = [t('requests.orderNotePrefillLead', { name: req.requested_by_name ?? t('requests.unknownRequester') })]
-    parts.push(req.qty_requested != null
-      ? t('requests.qtyLabel', { qty: req.qty_requested, unit: req.unit_of_measure || '' }) + ' — ' + req.description
-      : req.description)
-    if (req.vendor_hint) parts.push(t('requests.vendorHintLabel', { vendor: req.vendor_hint }))
-    if (req.project_number) parts.push(t('requests.projectLabel', { number: req.project_number, name: req.project_name }))
-    if (req.project_note) parts.push(t('requests.projectNoteLabel', { note: req.project_note }))
-    if (req.product_link) parts.push(req.product_link)
-    if (req.notes) parts.push(req.notes)
-    setForm(f => ({ ...f, notes: parts.join('\n') }))
-    setFromRequest(req)
+    const notesBlocks = reqs.map((req) => {
+      const parts = [t('requests.orderNotePrefillLead', { name: req.requested_by_name ?? t('requests.unknownRequester') })]
+      parts.push(req.qty_requested != null
+        ? t('requests.qtyLabel', { qty: req.qty_requested, unit: req.unit_of_measure || '' }) + ' — ' + req.description
+        : req.description)
+      if (req.vendor_hint) parts.push(t('requests.vendorHintLabel', { vendor: req.vendor_hint }))
+      if (req.project_number) parts.push(t('requests.projectLabel', { number: req.project_number, name: req.project_name }))
+      if (req.project_note) parts.push(t('requests.projectNoteLabel', { note: req.project_note }))
+      if (req.product_link) parts.push(req.product_link)
+      if (req.notes) parts.push(req.notes)
+      return parts.join('\n')
+    })
+    setForm(f => ({ ...f, notes: notesBlocks.join('\n\n---\n\n') }))
+    setFromRequests(reqs)
   }
+  const startFromRequest = (req) => startFromRequests([req])
 
   // Arrived via "Create Order" on a request ticket from the Requests page.
   useEffect(() => {
@@ -355,11 +372,20 @@ export default function Orders() {
         try { await uploadOrderAttachment(id, pendingAttachment) }
         catch { /* order still saved fine; can be attached later from the detail view */ }
       }
-      // Soft-fail here too — the order itself is what matters; if this call
-      // fails the ticket just stays open and can be linked manually later.
-      if (fromRequest) {
-        try { await resolveRequest(fromRequest.id, { status: 'ordered', order_id: id }) } catch { /* see above */ }
-        setFromRequest(null)
+      // Soft-fail here too — the order itself is what matters; if one of
+      // these calls fails that ticket just stays open and can be linked
+      // manually later (the others still go through).
+      if (fromRequests.length) {
+        for (const req of fromRequests) {
+          try { await resolveRequest(req.id, { status: 'ordered', order_id: id }) } catch { /* see above */ }
+        }
+        setFromRequests([])
+        setSelectedReady(new Set())
+        loadReady()
+        // The whole point of "send to Pending" — land where the order that
+        // was just created actually shows up, instead of staying on the
+        // Ready to Order tab looking at what's left of the queue.
+        setTab('pending')
       }
       setCreateOpen(false); load(); refreshBadges(true)
     } catch (err) {
@@ -456,10 +482,13 @@ export default function Orders() {
       <PageHeader title={t('orders.title')} subtitle={t('orders.subtitle')}
         actions={
           <div className="flex gap-2">
+            {tab === 'ready' && selectedReady.size > 0 && (
+              <Button onClick={createOrderForSelected}>{t('orders.createOrderForSelected', { count: selectedReady.size })}</Button>
+            )}
             {tab === 'ready' && readyRequests.length > 0 && (
               <Button variant="secondary" onClick={downloadReadyToOrderCsv}>{t('reports.exportCsv')}</Button>
             )}
-            {canRegister && tab !== 'discrepancies' && <Button onClick={openCreate}>{t('orders.newOrder')}</Button>}
+            {canRegister && tab !== 'discrepancies' && <Button variant={tab === 'ready' && selectedReady.size > 0 ? 'secondary' : 'primary'} onClick={openCreate}>{t('orders.newOrder')}</Button>}
           </div>
         } />
 
@@ -493,31 +522,32 @@ export default function Orders() {
           ) : (
             <div className="flex flex-col gap-3">
               {readyRequests.map((r) => (
-                <div key={r.id} className="rounded-2xl border border-gray-100 bg-white p-4 flex flex-col gap-2.5">
+                <div key={r.id} className={`rounded-2xl border bg-white p-4 flex flex-col gap-2.5 transition-colors ${
+                  selectedReady.has(r.id) ? 'border-brand-400 ring-1 ring-brand-100' : 'border-gray-100'
+                }`}>
                   <div className="flex items-start justify-between gap-2">
                     <div className="min-w-0">
                       <p className="text-sm font-semibold text-gray-900">{r.requested_by_name ?? t('requests.unknownRequester')}</p>
-                      <p className="text-xs text-gray-400">{formatDateTime(r.created_at)}</p>
+                      <p className="text-xs text-gray-500">{formatDateTime(r.created_at)}</p>
                     </div>
+                    <input type="checkbox" checked={selectedReady.has(r.id)} onChange={() => toggleReadySelect(r.id)}
+                      aria-label={t('orders.selectForOrder')}
+                      className="w-5 h-5 shrink-0 accent-brand-500 cursor-pointer" />
                   </div>
 
-                  <TranslatableText text={r.description} className="text-sm text-gray-800" />
+                  <TranslatableText text={r.description} className="text-sm text-gray-900" />
 
-                  <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-gray-500">
-                    {r.qty_requested != null && <span>{t('requests.qtyLabel', { qty: r.qty_requested, unit: r.unit_of_measure || '' })}</span>}
-                    {r.vendor_hint && <span>{t('requests.vendorHintLabel', { vendor: r.vendor_hint })}</span>}
-                    {r.location_name && <span>{t('requests.neededAtLabel', { location: r.location_name })}</span>}
-                    {r.project_number && <span>{t('requests.projectLabel', { number: r.project_number, name: r.project_name })}</span>}
+                  <div className="flex flex-wrap gap-1.5">
+                    {r.qty_requested != null && <Tag>{t('requests.qtyLabel', { qty: r.qty_requested, unit: r.unit_of_measure || '' })}</Tag>}
+                    {r.vendor_hint && <Tag tone="blue">{t('requests.vendorHintLabel', { vendor: r.vendor_hint })}</Tag>}
+                    {r.location_name && <Tag>{t('requests.neededAtLabel', { location: r.location_name })}</Tag>}
+                    {r.project_number && <Tag tone="brand">{t('requests.projectLabel', { number: r.project_number, name: r.project_name })}</Tag>}
                   </div>
-                  {r.project_note && <p className="text-xs text-gray-500">{t('requests.projectNoteLabel', { note: r.project_note })}</p>}
-                  {r.notes && <TranslatableText text={r.notes} className="text-xs text-gray-400 italic" />}
-                  {r.product_link && (
-                    <a href={r.product_link} target="_blank" rel="noopener noreferrer" className="text-xs font-semibold text-brand-600 hover:underline w-fit">
-                      {t('requests.viewProductLink')}
-                    </a>
-                  )}
+                  {r.project_note && <p className="text-xs font-medium text-gray-600">{t('requests.projectNoteLabel', { note: r.project_note })}</p>}
+                  {r.notes && <TranslatableText text={r.notes} className="text-xs text-gray-600 italic" />}
+                  {r.product_link && <LinkPreviewCard url={r.product_link} />}
 
-                  <div className="flex flex-col gap-2 pt-1 border-t border-gray-100 mt-1">
+                  <div className="flex flex-col gap-2 pt-2 border-t border-gray-100 mt-1">
                     {decliningReadyId === r.id ? (
                       <div className="flex flex-col gap-2">
                         <input type="text" placeholder={t('requests.declineReasonPlaceholder')} value={declineReadyReason}
@@ -529,9 +559,12 @@ export default function Orders() {
                         </div>
                       </div>
                     ) : (
-                      <div className="flex flex-wrap gap-2">
-                        <Button size="sm" onClick={() => startFromRequest(r)}>{t('requests.createOrder')}</Button>
-                        <button type="button" onClick={() => startDeclineReady(r.id)} className="text-xs font-semibold text-gray-400 hover:text-red-500 px-2">{t('requests.decline')}</button>
+                      <div className="flex flex-wrap gap-2 items-center">
+                        {selectedReady.size === 0 && <Button size="sm" onClick={() => startFromRequest(r)}>{t('requests.createOrder')}</Button>}
+                        <button type="button" onClick={() => startDeclineReady(r.id)}
+                          className="inline-flex items-center justify-center gap-2 font-semibold text-sm px-3 py-1.5 rounded-lg border border-red-200 text-red-600 bg-white hover:bg-red-50 transition-colors">
+                          {t('requests.decline')}
+                        </button>
                       </div>
                     )}
                   </div>
@@ -673,11 +706,16 @@ export default function Orders() {
       )}
 
       {/* ── Create order modal (specialist/admin) ───────────────────── */}
-      <Modal isOpen={createOpen} onClose={() => { setCreateOpen(false); setFromRequest(null) }} title={t('orders.newOrderTitle')} size="lg">
+      <Modal isOpen={createOpen} onClose={() => { setCreateOpen(false); setFromRequests([]) }} title={t('orders.newOrderTitle')} size="lg">
         <div className="flex flex-col gap-4">
-          {fromRequest && (
+          {fromRequests.length === 1 && (
             <div className="bg-brand-100 text-brand-800 rounded-xl px-4 py-3 text-sm">
-              {t('requests.fulfillingBanner', { name: fromRequest.requested_by_name ?? t('requests.unknownRequester') })}
+              {t('requests.fulfillingBanner', { name: fromRequests[0].requested_by_name ?? t('requests.unknownRequester') })}
+            </div>
+          )}
+          {fromRequests.length > 1 && (
+            <div className="bg-brand-100 text-brand-800 rounded-xl px-4 py-3 text-sm">
+              {t('requests.fulfillingBannerPlural', { count: fromRequests.length })}
             </div>
           )}
           <div className="flex flex-col gap-1">

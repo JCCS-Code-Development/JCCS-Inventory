@@ -14,6 +14,10 @@ export const updateRequestReview = (id, payload) => client.patch(`/requests/item
 export const undoDeclineRequest = (id) => client.patch(`/requests/item.php?id=${id}`, { status: 'open' }).then((r) => r.data)
 export const deleteRequest = (id) => client.delete(`/requests/item.php?id=${id}`).then((r) => r.data)
 
+// Title/description/image for a pasted product link (Open Graph, falling
+// back to <title>) — Lead-only, same as the product link field itself.
+export const getLinkPreview = (url) => client.get('/requests/link-preview.php', { params: { url } }).then((r) => r.data)
+
 // The "Ready to Order" worklist — reviewed (project and/or product link set)
 // requests still open — as a CSV, for the Mon/Wed/Fri session with the other
 // Inventory Lead.

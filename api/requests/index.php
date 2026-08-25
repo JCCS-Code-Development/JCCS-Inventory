@@ -55,12 +55,13 @@ if ($method === 'GET') {
     $body = jsonBody();
     requireFields($body, ['description']);
 
-    $locationId = !empty($body['location_id']) ? (int)$body['location_id'] : null;
-    if ($locationId) {
-        $chk = $pdo->prepare('SELECT 1 FROM locations WHERE id = ?');
-        $chk->execute([$locationId]);
-        if (!$chk->fetch()) { http_response_code(422); exit(json_encode(['error' => 'Unknown location'])); }
-    }
+    // Every request is for the same warehouse in practice, so this isn't a
+    // per-ticket choice any more — always resolve to "1200 Woodruff Rd."
+    // rather than asking. Falls back to NULL (unlabeled) if that location
+    // ever gets renamed/removed, rather than failing ticket creation over it.
+    $locStmt = $pdo->prepare("SELECT id FROM locations WHERE name = '1200 Woodruff Rd.' LIMIT 1");
+    $locStmt->execute();
+    $locationId = $locStmt->fetchColumn() ?: null;
 
     // project_id/project_note/product_link only ever come from the Inventory
     // Lead sitting down with the requester to review the ticket — ignored

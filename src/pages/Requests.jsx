@@ -10,16 +10,22 @@ import Badge from '../components/ui/Badge'
 import Spinner from '../components/ui/Spinner'
 import TranslatableText from '../components/ui/TranslatableText'
 import EstimateNumberField from '../components/ui/EstimateNumberField'
+import LinkPreviewCard from '../components/ui/LinkPreviewCard'
+import Tag from '../components/ui/Tag'
 import { listRequests, createRequest, resolveRequest, updateRequestReview, undoDeclineRequest, deleteRequest } from '../api/requests'
 import { listOrders } from '../api/orders'
-import { listLocations } from '../api/locations'
 import { useAuthStore } from '../store/authStore'
 import { useBadgeStore } from '../store/badgeStore'
 import { formatDateTime } from '../utils/format'
 import { useConfirm } from '../components/ConfirmProvider'
 import { useToast } from '../components/ToastProvider'
 
-const EMPTY = { description: '', qty_requested: '', unit_of_measure: '', vendor_hint: '', location_id: '', notes: '', project_note: '', product_link: '' }
+const EMPTY = { description: '', qty_requested: '', unit_of_measure: '', vendor_hint: '', notes: '', project_note: '', product_link: '' }
+
+// Every request is for the same warehouse in practice (1200 Woodruff Rd.) —
+// see api/requests/index.php, which resolves that automatically — so this
+// isn't a per-ticket choice any more and there's no location field here.
+const UNIT_OPTIONS = ['each', 'box', 'case', 'roll', 'gallon', 'bag', 'sheet', 'ft', 'yard', 'pallet', 'set', 'pair', 'tube', 'bundle']
 
 // The "I need this ordered" ticket form — shared between the worker's own
 // page, the Inventory Lead's "+ New Request" modal, and the Lead's "Edit
@@ -29,7 +35,7 @@ const EMPTY = { description: '', qty_requested: '', unit_of_measure: '', vendor_
 // product link are what get pinned down while the Lead and requester sit
 // down together, so a plain worker never sees them here.
 function RequestForm({
-  form, set, locations, error, saving, onSubmit, t, showReviewFields, onProjectResolved,
+  form, set, error, saving, onSubmit, t, showReviewFields, onProjectResolved,
   initialProjectNumber = '', initialProjectName = '', submitLabel,
 }) {
   return (
@@ -43,19 +49,20 @@ function RequestForm({
 
       <div className="grid grid-cols-2 gap-3">
         <Input label={t('requests.qtyOptional')} type="number" step="0.01" min="0" value={form.qty_requested} onChange={set('qty_requested')} />
-        <Input label={t('requests.unitOptional')} placeholder={t('requests.unitPlaceholder')} value={form.unit_of_measure} onChange={set('unit_of_measure')} />
+        <div className="flex flex-col gap-1">
+          <label className="text-sm font-medium text-gray-700">{t('requests.unitOptional')}</label>
+          <select value={form.unit_of_measure} onChange={set('unit_of_measure')}
+            className="rounded-xl border border-gray-300 px-4 py-3 text-base outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-100">
+            <option value="">{t('common.none')}</option>
+            {UNIT_OPTIONS.map(u => <option key={u} value={u}>{t(`requests.units.${u}`)}</option>)}
+            {form.unit_of_measure && !UNIT_OPTIONS.includes(form.unit_of_measure) && (
+              <option value={form.unit_of_measure}>{form.unit_of_measure}</option>
+            )}
+          </select>
+        </div>
       </div>
 
       <Input label={t('requests.vendorHintOptional')} placeholder={t('requests.vendorHintPlaceholder')} value={form.vendor_hint} onChange={set('vendor_hint')} />
-
-      <div className="flex flex-col gap-1">
-        <label className="text-sm font-medium text-gray-700">{t('requests.whereNeededOptional')}</label>
-        <select value={form.location_id} onChange={set('location_id')}
-          className="rounded-xl border border-gray-300 px-4 py-3 text-base outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-100">
-          <option value="">{t('common.none')}</option>
-          {locations.map(l => <option key={l.id} value={l.id}>{l.name}</option>)}
-        </select>
-      </div>
 
       <Input label={t('requests.anythingElseOptional')} value={form.notes} onChange={set('notes')} />
 
@@ -67,8 +74,11 @@ function RequestForm({
             onResolved={onProjectResolved} helperText={t('requests.projectHelper')} />
           <Input label={t('requests.projectNoteOptional')} placeholder={t('requests.projectNotePlaceholder')}
             value={form.project_note} onChange={set('project_note')} helperText={t('requests.projectNoteHelper')} />
-          <Input label={t('requests.productLinkOptional')} type="url" placeholder={t('requests.productLinkPlaceholder')}
-            value={form.product_link} onChange={set('product_link')} />
+          <div className="flex flex-col gap-1.5">
+            <Input label={t('requests.productLinkOptional')} type="url" placeholder={t('requests.productLinkPlaceholder')}
+              value={form.product_link} onChange={set('product_link')} />
+            <LinkPreviewCard url={form.product_link} />
+          </div>
         </div>
       )}
 
@@ -93,7 +103,6 @@ export default function Requests() {
 
   const [requests, setRequests] = useState([])
   const [orders, setOrders] = useState([])
-  const [locations, setLocations] = useState([])
   const [loading, setLoading] = useState(true)
   const [tab, setTab] = useState('open') // lead only: 'open' | 'ordered' | 'declined' | 'all'
 
@@ -130,7 +139,6 @@ export default function Requests() {
   useEffect(() => { load() }, [tab]) // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
-    listLocations({ active: 1 }).then(d => setLocations(d.locations ?? []))
     if (isLead) listOrders().then(d => setOrders(d.orders ?? []))
   }, [isLead])
 
@@ -146,7 +154,6 @@ export default function Requests() {
         qty_requested: form.qty_requested || null,
         unit_of_measure: form.unit_of_measure || null,
         vendor_hint: form.vendor_hint || null,
-        location_id: form.location_id || null,
         notes: form.notes || null,
         ...(isLead ? {
           project_id: newRequestProjectId || null,
@@ -200,7 +207,6 @@ export default function Requests() {
       qty_requested: r.qty_requested ?? '',
       unit_of_measure: r.unit_of_measure ?? '',
       vendor_hint: r.vendor_hint ?? '',
-      location_id: r.location_id ? String(r.location_id) : '',
       notes: r.notes ?? '',
       project_note: r.project_note ?? '',
       product_link: r.product_link ?? '',
@@ -246,63 +252,59 @@ export default function Requests() {
   const badgeVariant = { open: 'request_open', ordered: 'request_ordered', declined: 'request_declined' }
 
   const RequestCard = ({ r }) => (
-    <div className="rounded-2xl border border-gray-100 bg-white p-4 flex flex-col gap-2.5">
+    <div className="rounded-2xl border border-gray-100 bg-white p-4 flex flex-col gap-3">
       <div className="flex items-start justify-between gap-2">
         <div className="min-w-0">
           {isLead && <p className="text-sm font-semibold text-gray-900">{r.requested_by_name ?? t('requests.unknownRequester')}</p>}
-          <p className="text-xs text-gray-400">{formatDateTime(r.created_at)}</p>
+          <p className="text-xs text-gray-500">{formatDateTime(r.created_at)}</p>
         </div>
         <Badge variant={badgeVariant[r.status]}>{STATUS_LABELS[r.status]}</Badge>
       </div>
 
-      <TranslatableText text={r.description} className="text-sm text-gray-800" />
+      <TranslatableText text={r.description} className="text-sm text-gray-900" />
 
-      <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-gray-500">
-        {r.qty_requested != null && <span>{t('requests.qtyLabel', { qty: r.qty_requested, unit: r.unit_of_measure || '' })}</span>}
-        {r.vendor_hint && <span>{t('requests.vendorHintLabel', { vendor: r.vendor_hint })}</span>}
-        {r.location_name && <span>{t('requests.neededAtLabel', { location: r.location_name })}</span>}
-        {r.project_number && <span>{t('requests.projectLabel', { number: r.project_number, name: r.project_name })}</span>}
+      <div className="flex flex-wrap gap-1.5">
+        {r.qty_requested != null && <Tag>{t('requests.qtyLabel', { qty: r.qty_requested, unit: r.unit_of_measure || '' })}</Tag>}
+        {r.vendor_hint && <Tag tone="blue">{t('requests.vendorHintLabel', { vendor: r.vendor_hint })}</Tag>}
+        {r.location_name && <Tag>{t('requests.neededAtLabel', { location: r.location_name })}</Tag>}
+        {r.project_number && <Tag tone="brand">{t('requests.projectLabel', { number: r.project_number, name: r.project_name })}</Tag>}
       </div>
-      {r.project_note && <p className="text-xs text-gray-500">{t('requests.projectNoteLabel', { note: r.project_note })}</p>}
-      {r.notes && <TranslatableText text={r.notes} className="text-xs text-gray-400 italic" />}
-      {r.product_link && (
-        <a href={r.product_link} target="_blank" rel="noopener noreferrer" className="text-xs font-semibold text-brand-600 hover:underline w-fit">
-          {t('requests.viewProductLink')}
-        </a>
-      )}
+      {r.project_note && <p className="text-xs font-medium text-gray-600">{t('requests.projectNoteLabel', { note: r.project_note })}</p>}
+      {r.notes && <TranslatableText text={r.notes} className="text-xs text-gray-600 italic" />}
+      {r.product_link && <LinkPreviewCard url={r.product_link} />}
 
       {isLead && (
-        <button type="button" onClick={() => startEdit(r)} className="text-xs font-semibold text-gray-400 hover:text-brand-600 w-fit">
+        <Button size="sm" variant="secondary" onClick={() => startEdit(r)} className="w-fit">
           {t('requests.editRequest')}
-        </button>
+        </Button>
       )}
 
       {r.status === 'ordered' && r.order_number && (
         <p className="text-xs font-semibold text-brand-700">{t('requests.orderedAs', { order: r.order_number })}</p>
       )}
       {r.status === 'declined' && (
-        <div className="text-xs text-gray-500 flex items-start justify-between gap-2">
+        <div className="text-xs text-gray-600 flex items-start justify-between gap-2">
           <div>
             <p>{t('requests.declinedBy', { name: r.resolved_by_name ?? '—' })}</p>
-            {r.decline_reason && <TranslatableText text={r.decline_reason} className="text-gray-500 italic mt-0.5" />}
+            {r.decline_reason && <TranslatableText text={r.decline_reason} className="text-gray-600 italic mt-0.5" />}
           </div>
           {isLead && (
-            <button type="button" onClick={() => handleUndoDecline(r)} disabled={actingId === r.id}
-              className="text-xs font-semibold text-gray-400 hover:text-brand-600 shrink-0 disabled:opacity-50">
+            <Button size="sm" variant="secondary" onClick={() => handleUndoDecline(r)} loading={actingId === r.id} className="shrink-0">
               {t('requests.undoDecline')}
-            </button>
+            </Button>
           )}
         </div>
       )}
 
       {r.status === 'open' && !isLead && (
-        <button type="button" onClick={() => handleCancel(r)} className="text-xs font-semibold text-red-500 hover:underline w-fit">
+        <button type="button" onClick={() => handleCancel(r)}
+          className="inline-flex items-center justify-center gap-2 font-semibold text-sm px-3 py-1.5 rounded-lg border border-red-200 text-red-600 bg-white hover:bg-red-50 transition-colors w-fit">
           {t('requests.cancelRequest')}
         </button>
       )}
 
       {r.status === 'open' && isLead && (
-        <div className="flex flex-col gap-2 pt-1 border-t border-gray-100 mt-1">
+        <div className="flex flex-col gap-2 pt-2 border-t border-gray-100 mt-1">
           {decliningId === r.id ? (
             <div className="flex flex-col gap-2">
               <input type="text" placeholder={t('requests.declineReasonPlaceholder')} value={declineReason}
@@ -329,7 +331,10 @@ export default function Requests() {
             <div className="flex flex-wrap gap-2">
               <Button size="sm" onClick={() => handleCreateOrder(r)}>{t('requests.createOrder')}</Button>
               {orders.length > 0 && <Button size="sm" variant="secondary" onClick={() => startLink(r.id)}>{t('requests.linkExistingOrder')}</Button>}
-              <button type="button" onClick={() => startDecline(r.id)} className="text-xs font-semibold text-gray-400 hover:text-red-500 px-2">{t('requests.decline')}</button>
+              <button type="button" onClick={() => startDecline(r.id)}
+                className="inline-flex items-center justify-center gap-2 font-semibold text-sm px-3 py-1.5 rounded-lg border border-red-200 text-red-600 bg-white hover:bg-red-50 transition-colors">
+                {t('requests.decline')}
+              </button>
             </div>
           )}
         </div>
@@ -345,7 +350,7 @@ export default function Requests() {
       <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,26rem)_1fr] gap-6 items-start">
         {!isLead && (
           <Card title={t('requests.whatDoYouNeed')}>
-            <RequestForm form={form} set={set} locations={locations} error={error} saving={saving} onSubmit={handleSubmit} t={t} />
+            <RequestForm form={form} set={set} error={error} saving={saving} onSubmit={handleSubmit} t={t} />
           </Card>
         )}
 
@@ -382,13 +387,13 @@ export default function Requests() {
       </div>
 
       <Modal isOpen={modalOpen} onClose={() => setModalOpen(false)} title={t('requests.newRequest')}>
-        <RequestForm form={form} set={set} locations={locations} error={error} saving={saving} onSubmit={handleSubmit} t={t}
+        <RequestForm form={form} set={set} error={error} saving={saving} onSubmit={handleSubmit} t={t}
           showReviewFields={isLead} onProjectResolved={(project) => setNewRequestProjectId(project ? project.id : null)} />
       </Modal>
 
       <Modal isOpen={!!editing} onClose={() => setEditing(null)} title={t('requests.editRequest')}>
         {editing && (
-          <RequestForm form={editForm} set={setEdit} locations={locations} error={editError} saving={editSaving} onSubmit={handleEditSubmit} t={t}
+          <RequestForm form={editForm} set={setEdit} error={editError} saving={editSaving} onSubmit={handleEditSubmit} t={t}
             showReviewFields initialProjectNumber={editing.project_number ?? ''} initialProjectName={editing.project_name ?? ''}
             onProjectResolved={(project) => setEditProjectId(project ? project.id : null)}
             submitLabel={t('requests.saveChanges')} />
