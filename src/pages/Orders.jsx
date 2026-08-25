@@ -199,6 +199,7 @@ export default function Orders() {
       : req.description)
     if (req.vendor_hint) parts.push(t('requests.vendorHintLabel', { vendor: req.vendor_hint }))
     if (req.project_number) parts.push(t('requests.projectLabel', { number: req.project_number, name: req.project_name }))
+    if (req.project_note) parts.push(t('requests.projectNoteLabel', { note: req.project_note }))
     if (req.product_link) parts.push(req.product_link)
     if (req.notes) parts.push(req.notes)
     setForm(f => ({ ...f, notes: parts.join('\n') }))
@@ -508,6 +509,7 @@ export default function Orders() {
                     {r.location_name && <span>{t('requests.neededAtLabel', { location: r.location_name })}</span>}
                     {r.project_number && <span>{t('requests.projectLabel', { number: r.project_number, name: r.project_name })}</span>}
                   </div>
+                  {r.project_note && <p className="text-xs text-gray-500">{t('requests.projectNoteLabel', { note: r.project_note })}</p>}
                   {r.notes && <TranslatableText text={r.notes} className="text-xs text-gray-400 italic" />}
                   {r.product_link && (
                     <a href={r.product_link} target="_blank" rel="noopener noreferrer" className="text-xs font-semibold text-brand-600 hover:underline w-fit">

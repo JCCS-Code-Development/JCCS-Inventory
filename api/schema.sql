@@ -246,6 +246,13 @@ CREATE TABLE `order_requests` (
   `vendor_hint`      VARCHAR(150)  NULL, -- "usually get these from Grainger" — a hint, not a formal vendor link
   `location_id`      INT UNSIGNED  NULL, -- where it's needed, if known
   `project_id`       INT UNSIGNED  NULL, -- job this is charged/tied to — set at review time
+  -- Plain-language "what job this is for", independent of project_id/the
+  -- Estimate # itself. Lets the Lead pin down *which* job right away even
+  -- when they don't have (or aren't sure of) the actual 4-digit number yet
+  -- — they can type a project number now as a placeholder and come back to
+  -- correct project_id/the Estimate # later without losing track of what
+  -- this ticket was actually for.
+  `project_note`     VARCHAR(255)  NULL,
   `product_link`     VARCHAR(500)  NULL, -- URL to the specific product, agreed on during the review
   `notes`            TEXT          NULL,
   `status`           ENUM('open','ordered','declined') NOT NULL DEFAULT 'open',

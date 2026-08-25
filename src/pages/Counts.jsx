@@ -10,6 +10,7 @@ import { getCurrentStock, submitCount } from '../api/stock'
 import { useConfirm } from '../components/ConfirmProvider'
 import { useToast } from '../components/ToastProvider'
 import { useBadgeStore, COUNTS_DRAFT_STORAGE_KEY } from '../store/badgeStore'
+import { translateCategoryName } from '../utils/catalogNames'
 
 // A count "in progress" (checked off but not yet saved) is only ever
 // ephemeral component state — it doesn't exist anywhere on the server. To
@@ -219,7 +220,7 @@ export default function Counts() {
         ) : (
           <div className="flex flex-col gap-3">
             {groupedLines.map(([categoryName, categoryLines]) => (
-              <CategorySection key={categoryName} title={categoryName} count={categoryLines.length}>
+              <CategorySection key={categoryName} title={translateCategoryName(categoryName, t)} count={categoryLines.length}>
                 {categoryLines.map((line) => {
                   const countedNum = parseFloat(line.counted || 0)
                   const diff = countedNum - line.expected

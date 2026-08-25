@@ -21,7 +21,7 @@ $pdo  = getPDO();
 $rows = $pdo->query(
     "SELECT r.created_at, req.name AS requested_by_name, r.description, r.qty_requested,
             r.unit_of_measure, r.vendor_hint, l.name AS location_name,
-            p.project_number, p.name AS project_name, r.product_link, r.notes
+            p.project_number, p.name AS project_name, r.project_note, r.product_link, r.notes
      FROM order_requests r
      LEFT JOIN inventory_user_roles req ON req.fieldclock_user_id = r.requested_by
      LEFT JOIN locations l ON l.id = r.location_id
@@ -36,12 +36,12 @@ header('Content-Disposition: attachment; filename="ready-to-order-report.csv"');
 // PHP 8.4+ requires $escape explicitly (its default is changing) — pass it on
 // every call so this doesn't depend on which PHP version the server runs.
 $out = fopen('php://output', 'w');
-fputcsv($out, ['Requested', 'Requested By', 'Description', 'Qty', 'Unit', 'Vendor Hint', 'Location', 'Project #', 'Project Name', 'Product Link', 'Notes'], ',', '"', '\\');
+fputcsv($out, ['Requested', 'Requested By', 'Description', 'Qty', 'Unit', 'Vendor Hint', 'Location', 'Project #', 'Project Name', 'Project Note', 'Product Link', 'Notes'], ',', '"', '\\');
 foreach ($rows as $r) {
     fputcsv($out, [
         $r['created_at'], $r['requested_by_name'] ?? '', $r['description'], $r['qty_requested'] ?? '',
         $r['unit_of_measure'] ?? '', $r['vendor_hint'] ?? '', $r['location_name'] ?? '',
-        $r['project_number'] ?? '', $r['project_name'] ?? '', $r['product_link'] ?? '', $r['notes'] ?? '',
+        $r['project_number'] ?? '', $r['project_name'] ?? '', $r['project_note'] ?? '', $r['product_link'] ?? '', $r['notes'] ?? '',
     ], ',', '"', '\\');
 }
 fclose($out);

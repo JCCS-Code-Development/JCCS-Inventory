@@ -62,9 +62,10 @@ if ($method === 'GET') {
         if (!$chk->fetch()) { http_response_code(422); exit(json_encode(['error' => 'Unknown location'])); }
     }
 
-    // project_id/product_link only ever come from the Inventory Lead sitting
-    // down with the requester to review the ticket — ignored here even if a
-    // basic user's client sent them, so the review step can't be skipped.
+    // project_id/project_note/product_link only ever come from the Inventory
+    // Lead sitting down with the requester to review the ticket — ignored
+    // here even if a basic user's client sent them, so the review step
+    // can't be skipped.
     $isLead = in_array($auth['role'], ['specialist', 'admin'], true);
 
     $projectId = null;
@@ -83,10 +84,12 @@ if ($method === 'GET') {
         }
     }
 
+    $projectNote = $isLead && !empty($body['project_note']) ? sanitizeString($body['project_note']) : null;
+
     $stmt = $pdo->prepare(
         'INSERT INTO order_requests
-            (requested_by, description, qty_requested, unit_of_measure, vendor_hint, location_id, project_id, product_link, notes)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)'
+            (requested_by, description, qty_requested, unit_of_measure, vendor_hint, location_id, project_id, project_note, product_link, notes)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
     );
     $stmt->execute([
         $auth['user_id'],
@@ -96,6 +99,7 @@ if ($method === 'GET') {
         !empty($body['vendor_hint']) ? sanitizeString($body['vendor_hint']) : null,
         $locationId,
         $projectId,
+        $projectNote,
         $productLink,
         !empty($body['notes']) ? sanitizeString($body['notes']) : null,
     ]);

@@ -13,6 +13,7 @@ import { listLocations } from '../api/locations'
 import { getCurrentStock, checkoutStock, checkinStock } from '../api/stock'
 import { lookupItemByBarcode } from '../api/items'
 import { useAuthStore } from '../store/authStore'
+import { translateCategoryName } from '../utils/catalogNames'
 
 const EMPTY = { item_id: '', qty: '', project_id: '', taken_by_name: '', notes: '' }
 const BarcodeScanner = lazy(() => import('../components/ui/BarcodeScanner'))
@@ -199,7 +200,7 @@ export default function TakeDropoff() {
                     search={itemSearch} onSearchChange={setItemSearch}
                     results={itemMatches(itemSearch).map(i => ({
                       id: i.item_id, label: i.name,
-                      sublabel: `${i.sku}${i.category_name ? ` · ${i.category_name}` : ''} — ${t('takeDropoff.availableQty', { qty: i.qty_on_hand, unit: i.unit_of_measure })}`,
+                      sublabel: `${i.sku}${i.category_name ? ` · ${translateCategoryName(i.category_name, t)}` : ''} — ${t('takeDropoff.availableQty', { qty: i.qty_on_hand, unit: i.unit_of_measure })}`,
                     }))}
                     onPick={pickItem}
                     placeholder={t('common.selectItem')}

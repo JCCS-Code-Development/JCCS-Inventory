@@ -9,6 +9,7 @@ import Badge from '../components/ui/Badge'
 import Spinner from '../components/ui/Spinner'
 import ScannerLoading from '../components/ui/ScannerLoading'
 import EstimateNumberField from '../components/ui/EstimateNumberField'
+import ImageLightbox from '../components/ui/ImageLightbox'
 import {
   listItems, createItem, updateItem, deactivateItem, lookupItemByBarcode,
   listItemBarcodes, addItemBarcode, removeItemBarcode,
@@ -22,6 +23,7 @@ import { receiveStock, getCurrentStock } from '../api/stock'
 import { useAuthStore } from '../store/authStore'
 import { formatCurrency, formatQty } from '../utils/format'
 import { compressImage } from '../utils/compressImage'
+import { translateCategoryName, translateMaterialName } from '../utils/catalogNames'
 import { useConfirm } from '../components/ConfirmProvider'
 import { useToast } from '../components/ToastProvider'
 
@@ -57,14 +59,14 @@ function GroupSection({ title, count, children, defaultOpen = true, itemsLabel }
 // The items table itself, reused both flat (groupBy "none") and inside each
 // GroupSection. qtyMap, when given, swaps the "Total Units" column for
 // on-hand qty at one specific location instead of the cross-location sum.
-function ItemsTable({ items, canSeeCost, canManage, onEdit, onDeactivate, qtyMap, qtyLabel, headers, t }) {
+function ItemsTable({ items, canSeeCost, canManage, onEdit, onDeactivate, onImageClick, qtyMap, qtyLabel, headers, t }) {
   return (
     <div className="overflow-x-auto">
       <table className="w-full text-sm">
         <thead>
           <tr className="border-b border-gray-100 bg-gray-50">
             {['', headers.sku, headers.name, headers.category, headers.material, qtyLabel, ...(canSeeCost ? [headers.vendor, headers.unitCost] : []), headers.project, headers.reorderPt, ''].map((h, i) => (
-              <th key={`${h}-${i}`} className={`px-4 py-3 text-left text-xs font-semibold text-gray-400 uppercase tracking-wide ${i === 0 ? 'w-[96px] min-w-[96px]' : ''}`}>{h}</th>
+              <th key={`${h}-${i}`} className={`px-4 py-3 text-left text-xs font-semibold text-gray-400 uppercase tracking-wide ${i === 0 ? 'w-[128px] min-w-[128px]' : ''}`}>{h}</th>
             ))}
           </tr>
         </thead>
@@ -73,17 +75,20 @@ function ItemsTable({ items, canSeeCost, canManage, onEdit, onDeactivate, qtyMap
             const qty = qtyMap ? (qtyMap[it.id] ?? 0) : it.total_qty
             return (
               <tr key={it.id} className="hover:bg-gray-50">
-                <td className="px-4 py-3 w-[96px] min-w-[96px]">
+                <td className="px-4 py-3 w-[128px] min-w-[128px]">
                   {it.image_url ? (
-                    <img src={it.image_url} alt="" className="w-16 h-16 rounded-xl object-cover shrink-0" style={{ maxWidth: 'none' }} />
+                    <button type="button" onClick={() => onImageClick?.(it)}
+                      className="block w-24 h-24 rounded-xl overflow-hidden shrink-0 ring-1 ring-black/5 hover:ring-2 hover:ring-brand-400 transition-all cursor-zoom-in">
+                      <img src={it.image_url} alt="" className="w-full h-full object-cover" style={{ maxWidth: 'none' }} />
+                    </button>
                   ) : (
-                    <div className="w-16 h-16 rounded-xl bg-gray-100 flex items-center justify-center text-gray-300 text-2xl shrink-0">📦</div>
+                    <div className="w-24 h-24 rounded-xl bg-gray-100 flex items-center justify-center text-gray-300 text-3xl shrink-0">📦</div>
                   )}
                 </td>
                 <td className="px-4 py-3 font-mono text-xs text-gray-500">{it.sku}</td>
                 <td className="px-4 py-3 font-medium text-gray-900">{it.name}</td>
-                <td className="px-4 py-3 text-gray-600">{it.category_name ?? '—'}</td>
-                <td className="px-4 py-3 text-gray-600">{it.material_name ?? '—'}</td>
+                <td className="px-4 py-3 text-gray-600">{it.category_name ? translateCategoryName(it.category_name, t) : '—'}</td>
+                <td className="px-4 py-3 text-gray-600">{it.material_name ? translateMaterialName(it.material_name, t) : '—'}</td>
                 <td className="px-4 py-3 text-gray-600">{formatQty(qty, it.unit_of_measure)}</td>
                 {canSeeCost && <td className="px-4 py-3 text-gray-600">{it.vendor_name ?? '—'}</td>}
                 {canSeeCost && <td className="px-4 py-3 text-gray-600">{formatCurrency(it.unit_cost)}</td>}
@@ -147,6 +152,10 @@ export default function Items() {
   const [filterCategory, setFilterCategory] = useState('')
   const [filterVendor,   setFilterVendor]   = useState('')
   const [filterLocation, setFilterLocation] = useState('')
+
+  // Click a thumbnail in the table to see the full photo — the item whose
+  // image is currently blown up, or null when the lightbox is closed.
+  const [lightboxItem, setLightboxItem] = useState(null)
 
   // Group by — default splits by storage location, then by vendor within
   // each (per the standing request). "None" flattens back to a single table
@@ -491,7 +500,7 @@ export default function Items() {
       }
     }
   } else if (groupBy === 'category') {
-    groupSections = byKey(base, (it) => it.category_name, uncategorizedLabel).map(([name, list]) => ({ key: `cat-${name}`, title: name, items: list, qtyMap: null, subSections: null }))
+    groupSections = byKey(base, (it) => it.category_name, uncategorizedLabel).map(([name, list]) => ({ key: `cat-${name}`, title: translateCategoryName(name, t), items: list, qtyMap: null, subSections: null }))
   } else if (groupBy === 'vendor' && canSeeCost) {
     groupSections = byKey(base, (it) => it.vendor_name, noVendorLabel).map(([name, list]) => ({ key: `ven-${name}`, title: name, items: list, qtyMap: null, subSections: null }))
   }
@@ -535,7 +544,7 @@ export default function Items() {
           <select value={filterCategory} onChange={(e) => setFilterCategory(e.target.value)}
             className="w-full rounded-xl border border-gray-300 px-3 py-2 text-sm outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-100">
             <option value="">{t('items.allCategories')}</option>
-            {categories.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+            {categories.map((c) => <option key={c.id} value={c.id}>{translateCategoryName(c.name, t)}</option>)}
           </select>
         </div>
 
@@ -565,7 +574,7 @@ export default function Items() {
           </div>
         ) : groupSections === null ? (
           <div className="bg-white rounded-2xl border border-gray-100 overflow-hidden">
-            <ItemsTable items={base} canSeeCost={canSeeCost} canManage={canManage} onEdit={openEdit} onDeactivate={handleDeactivate}
+            <ItemsTable items={base} canSeeCost={canSeeCost} canManage={canManage} onEdit={openEdit} onDeactivate={handleDeactivate} onImageClick={setLightboxItem}
               qtyLabel={t('items.totalUnits')} headers={tableHeaders} t={t} />
           </div>
         ) : (
@@ -578,13 +587,13 @@ export default function Items() {
                   <div className="flex flex-col gap-2 p-3 bg-gray-50/60">
                     {section.subSections.map((sub) => (
                       <GroupSection key={sub.key} title={sub.title} count={sub.items.length} itemsLabel={itemsLabel(sub.items.length)}>
-                        <ItemsTable items={sub.items} canSeeCost={canSeeCost} canManage={canManage} onEdit={openEdit} onDeactivate={handleDeactivate}
+                        <ItemsTable items={sub.items} canSeeCost={canSeeCost} canManage={canManage} onEdit={openEdit} onDeactivate={handleDeactivate} onImageClick={setLightboxItem}
                           qtyMap={section.qtyMap} qtyLabel={section.qtyMap ? t('items.onHand') : t('items.totalUnits')} headers={tableHeaders} t={t} />
                       </GroupSection>
                     ))}
                   </div>
                 ) : (
-                  <ItemsTable items={section.items} canSeeCost={canSeeCost} canManage={canManage} onEdit={openEdit} onDeactivate={handleDeactivate}
+                  <ItemsTable items={section.items} canSeeCost={canSeeCost} canManage={canManage} onEdit={openEdit} onDeactivate={handleDeactivate} onImageClick={setLightboxItem}
                     qtyMap={section.qtyMap} qtyLabel={section.qtyMap ? t('items.onHand') : t('items.totalUnits')} headers={tableHeaders} t={t} />
                 )}
               </GroupSection>
@@ -694,7 +703,7 @@ export default function Items() {
                 <select value={form.category_id} onChange={setCategory}
                   className="rounded-xl border border-gray-300 px-4 py-3 text-base outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-100">
                   <option value="">{t('common.none')}</option>
-                  {categories.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+                  {categories.map(c => <option key={c.id} value={c.id}>{translateCategoryName(c.name, t)}</option>)}
                 </select>
                 {showNewCategory && (
                   <div className="flex gap-2 mt-1">
@@ -712,7 +721,7 @@ export default function Items() {
                 <select value={form.material_id} onChange={set('material_id')} disabled={!form.category_id}
                   className="rounded-xl border border-gray-300 px-4 py-3 text-base outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-100 disabled:bg-gray-50 disabled:text-gray-400">
                   <option value="">{form.category_id ? t('common.none') : t('items.pickCategory')}</option>
-                  {materials.map(m => <option key={m.id} value={m.id}>{m.name}</option>)}
+                  {materials.map(m => <option key={m.id} value={m.id}>{translateMaterialName(m.name, t)}</option>)}
                 </select>
                 {showNewMaterial && (
                   <div className="flex gap-2 mt-1">
@@ -819,6 +828,8 @@ export default function Items() {
           <BarcodeScanner onClose={() => setScannerOpen(false)} onDetected={handleBarcodeScanned} />
         </Suspense>
       )}
+
+      <ImageLightbox src={lightboxItem?.image_url} alt={lightboxItem?.name ?? ''} onClose={() => setLightboxItem(null)} />
     </div>
   )
 }

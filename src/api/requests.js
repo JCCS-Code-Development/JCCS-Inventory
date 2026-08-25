@@ -9,6 +9,9 @@ export const resolveRequest = (id, payload) => client.patch(`/requests/item.php?
 // touching status — the "sat down and went over it together" step, which
 // can happen before (or without) the ticket ever being marked ordered.
 export const updateRequestReview = (id, payload) => client.patch(`/requests/item.php?id=${id}`, payload).then((r) => r.data)
+// Undo a decline — puts the ticket back to 'open'. Only valid on an
+// already-declined request (enforced server-side).
+export const undoDeclineRequest = (id) => client.patch(`/requests/item.php?id=${id}`, { status: 'open' }).then((r) => r.data)
 export const deleteRequest = (id) => client.delete(`/requests/item.php?id=${id}`).then((r) => r.data)
 
 // The "Ready to Order" worklist — reviewed (project and/or product link set)
