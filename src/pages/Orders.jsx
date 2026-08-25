@@ -206,19 +206,21 @@ export default function Orders() {
   // request handed in gets resolved to the same order once it's saved.
   const startFromRequests = (reqs) => {
     openCreate()
-    const notesBlocks = reqs.map((req) => {
-      const parts = [t('requests.orderNotePrefillLead', { name: req.requested_by_name ?? t('requests.unknownRequester') })]
-      parts.push(req.qty_requested != null
-        ? t('requests.qtyLabel', { qty: req.qty_requested, unit: req.unit_of_measure || '' }) + ' — ' + req.description
-        : req.description)
-      if (req.vendor_hint) parts.push(t('requests.vendorHintLabel', { vendor: req.vendor_hint }))
-      if (req.project_number) parts.push(t('requests.projectLabel', { number: req.project_number, name: req.project_name }))
-      if (req.project_note) parts.push(t('requests.projectNoteLabel', { note: req.project_note }))
-      if (req.product_link) parts.push(req.product_link)
-      if (req.notes) parts.push(req.notes)
-      return parts.join('\n')
-    })
-    setForm(f => ({ ...f, notes: notesBlocks.join('\n\n---\n\n') }))
+    // Notes stays blank and free for whatever the Lead actually wants to
+    // write about *this order* — what each request asked for is real
+    // context, but it belongs in its own read-only reference block (see the
+    // "Fulfilling" panel below), not dumped into the one field meant for
+    // the Lead's own notes.
+    // One line item slot per request, pre-searched with what they asked for
+    // — the Lead still has to pick the matching catalog item or create a new
+    // one for each (a request has no item_id of its own, on purpose: workers
+    // rarely know the exact SKU), but at least they don't start from a
+    // single blank line with no hint of what needs to go in it.
+    setLines(reqs.map((req) => ({
+      ...EMPTY_LINE,
+      itemSearch: req.description,
+      qty_ordered: req.qty_requested != null ? String(req.qty_requested) : '',
+    })))
     setFromRequests(reqs)
   }
   const startFromRequest = (req) => startFromRequests([req])
@@ -340,6 +342,17 @@ export default function Orders() {
 
   const handleCreate = async () => {
     const validLines = lines.filter(l => l.item_id && l.qty_ordered)
+    // A line with a search typed in (or a qty entered) but no item actually
+    // picked/created is easy to miss — it just silently wouldn't count
+    // toward validLines otherwise, so "I filled everything out" ends up
+    // either submitting fewer lines than expected or hitting the generic
+    // "add at least one line" message with no hint why. Block and say
+    // exactly which line(s) still need an item selected or created.
+    const incomplete = lines.filter(l => !l.item_id && (l.itemSearch.trim() || l.qty_ordered))
+    if (incomplete.length) {
+      setError(t('orders.linesNeedItem', { count: incomplete.length }))
+      return
+    }
     if (!validLines.length) { setError(t('orders.addLeastOneLine')); return }
     if (form.order_type === 'dropoff') {
       if (!form.vendor_id) { setError(t('orders.chooseWherePurchased')); return }
@@ -708,14 +721,35 @@ export default function Orders() {
       {/* ── Create order modal (specialist/admin) ───────────────────── */}
       <Modal isOpen={createOpen} onClose={() => { setCreateOpen(false); setFromRequests([]) }} title={t('orders.newOrderTitle')} size="lg">
         <div className="flex flex-col gap-4">
-          {fromRequests.length === 1 && (
-            <div className="bg-brand-100 text-brand-800 rounded-xl px-4 py-3 text-sm">
-              {t('requests.fulfillingBanner', { name: fromRequests[0].requested_by_name ?? t('requests.unknownRequester') })}
-            </div>
-          )}
-          {fromRequests.length > 1 && (
-            <div className="bg-brand-100 text-brand-800 rounded-xl px-4 py-3 text-sm">
-              {t('requests.fulfillingBannerPlural', { count: fromRequests.length })}
+          {fromRequests.length > 0 && (
+            <div className="rounded-xl border border-brand-200 bg-brand-50/60 p-3 flex flex-col gap-2">
+              <p className="text-sm font-semibold text-brand-800">
+                {fromRequests.length === 1
+                  ? t('requests.fulfillingBanner', { name: fromRequests[0].requested_by_name ?? t('requests.unknownRequester') })
+                  : t('requests.fulfillingBannerPlural', { count: fromRequests.length })}
+              </p>
+              {/* Read-only reference — what each request actually asked for, kept
+                  separate from the Notes field below so that stays free for
+                  whatever the Lead wants to write about this order itself. */}
+              <div className="flex flex-col gap-1.5">
+                {fromRequests.map((req) => (
+                  <div key={req.id} className="rounded-lg bg-white/70 px-2.5 py-2 flex flex-col gap-1">
+                    <p className="text-xs font-medium text-gray-900">{req.description}</p>
+                    <div className="flex flex-wrap gap-1.5">
+                      {req.qty_requested != null && <Tag>{t('requests.qtyLabel', { qty: req.qty_requested, unit: req.unit_of_measure || '' })}</Tag>}
+                      {req.vendor_hint && <Tag tone="blue">{t('requests.vendorHintLabel', { vendor: req.vendor_hint })}</Tag>}
+                      {req.project_number && <Tag tone="brand">{t('requests.projectLabel', { number: req.project_number, name: req.project_name })}</Tag>}
+                    </div>
+                    {req.project_note && <p className="text-xs text-gray-600">{t('requests.projectNoteLabel', { note: req.project_note })}</p>}
+                    {req.notes && <p className="text-xs text-gray-600 italic">{req.notes}</p>}
+                    {req.product_link && (
+                      <a href={req.product_link} target="_blank" rel="noopener noreferrer" className="text-xs font-semibold text-brand-600 hover:underline w-fit">
+                        {t('requests.viewProductLink')}
+                      </a>
+                    )}
+                  </div>
+                ))}
+              </div>
             </div>
           )}
           <div className="flex flex-col gap-1">
@@ -854,8 +888,12 @@ export default function Orders() {
               const selectedItem = items.find(it => String(it.id) === String(line.item_id)) || null
               const itemMatches = itemMatchesFor(line)
               const itemExactMatch = items.some(it => it.sku.toLowerCase() === line.itemSearch.trim().toLowerCase())
+              // Typed a search or a qty but never actually picked/created the
+              // item — this line won't count toward the order as-is, and
+              // that's easy to miss, so flag it before Save does.
+              const needsItem = !line.item_id && (line.itemSearch.trim() || line.qty_ordered)
               return (
-                <div key={i} className="flex flex-col gap-2 rounded-xl border border-gray-100 p-2.5">
+                <div key={i} className={`flex flex-col gap-2 rounded-xl border p-2.5 ${needsItem ? 'border-amber-300 bg-amber-50/50' : 'border-gray-100'}`}>
                   <div className="flex items-start gap-2">
                     <div className="flex-1 min-w-0">
                       <SearchSelect
@@ -881,13 +919,17 @@ export default function Orders() {
                               </Button>
                             </div>
                           ) : (
-                            <button type="button" onClick={() => updateLine(i, { showCreateItem: true, newSku: line.itemSearch.trim() })}
-                              className="text-left text-xs font-semibold text-brand-500 hover:underline px-2 py-1.5 w-fit">
+                            <Button type="button" variant="secondary" size="sm"
+                              onClick={() => updateLine(i, { showCreateItem: true, newSku: line.itemSearch.trim() })}
+                              className="m-1 w-fit">
                               {t('orders.createNewItem', { name: line.itemSearch.trim() })}
-                            </button>
+                            </Button>
                           )
                         )}
                       />
+                      {needsItem && (
+                        <p className="text-xs font-medium text-amber-700 mt-1.5">{t('orders.lineNeedsItemHint')}</p>
+                      )}
                     </div>
                     {lines.length > 1 && (
                       <button type="button" onClick={() => removeLine(i)} className="text-red-500 text-sm px-2 py-2.5 shrink-0">✕</button>
