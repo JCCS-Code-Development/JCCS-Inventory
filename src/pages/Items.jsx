@@ -128,6 +128,14 @@ export default function Items() {
     vendor: t('common.vendor'), unitCost: t('items.unitCost'), project: t('items.project'), reorderPt: t('items.reorderPt'),
   }
 
+  // 'items' (the full browsable catalog, with its own filters/grouping) vs
+  // 'byProject' (Inventory Lead + admin only — every item that has an
+  // Assigned Project set, grouped by that project). A separate tab rather
+  // than another "Group by" option since it's a genuinely different
+  // question ("what's tied to which job") from how the rest of the page
+  // is organized (storage/category/vendor).
+  const [view, setView] = useState('items')
+
   const [items,      setItems]      = useState([])
   const [categories, setCategories] = useState([])
   const [materials,  setMaterials]  = useState([]) // scoped to form.category_id
@@ -507,6 +515,19 @@ export default function Items() {
 
   const itemsLabel = (n) => n === 1 ? t('items.itemSingular') : t('items.itemPlural')
 
+  // "Items by Project" tab — only items with an Assigned Project set (see
+  // items.default_project_id), grouped under that job. Independent of the
+  // main tab's storage/category/vendor filters — those questions don't
+  // apply here — but still honors the search box, since narrowing by
+  // SKU/name is just as useful in this view.
+  const projectSearchMatch = (it) => !search || `${it.sku} ${it.name}`.toLowerCase().includes(search.toLowerCase())
+  const projectItems = items.filter((it) => it.default_project_id && projectSearchMatch(it))
+  const projectGroupSections = byKey(
+    projectItems,
+    (it) => t('requests.projectLabel', { number: it.default_project_number, name: it.default_project_name }),
+    ''
+  ).map(([title, list]) => ({ key: `proj-${title}`, title, items: list, qtyMap: null, subSections: null }))
+
   return (
     <div className="w-full">
       <PageHeader
@@ -517,6 +538,20 @@ export default function Items() {
 
       <Input ref={searchRef} placeholder={t('items.searchPlaceholder')} value={search} onChange={(e) => setSearch(e.target.value)} className="mb-4 max-w-sm" />
 
+      {canManage && (
+        <div className="flex gap-2 mb-4 flex-wrap">
+          {[['items', t('items.tabAllItems')], ['byProject', t('items.tabByProject')]].map(([val, label]) => (
+            <button key={val} type="button" onClick={() => setView(val)}
+              className={`px-4 py-2 rounded-xl text-sm font-semibold transition-colors ${
+                view === val ? 'bg-brand-500 text-white' : 'bg-white border border-gray-200 text-gray-600 hover:border-gray-300'
+              }`}>
+              {label}
+            </button>
+          ))}
+        </div>
+      )}
+
+      {view === 'items' && (
       <div className="bg-white rounded-2xl border border-gray-100 p-4 mb-4 flex flex-wrap items-end gap-3">
         <div className="flex flex-col gap-1 flex-1 min-w-[10rem]">
           <label className="text-xs font-semibold text-gray-400 uppercase tracking-wide">{t('items.groupBy')}</label>
@@ -566,8 +601,24 @@ export default function Items() {
           </button>
         )}
       </div>
+      )}
 
-      {loading || stockLoading ? <div className="flex justify-center py-16"><Spinner size="lg" /></div> : (
+      {loading || stockLoading ? <div className="flex justify-center py-16"><Spinner size="lg" /></div> : view === 'byProject' ? (
+        projectGroupSections.length === 0 ? (
+          <div className="bg-white rounded-2xl border border-gray-100 overflow-hidden">
+            <p className="text-center text-gray-400 py-16 text-sm">{t('items.noProjectItemsYet')}</p>
+          </div>
+        ) : (
+          <div className="flex flex-col gap-3">
+            {projectGroupSections.map((section) => (
+              <GroupSection key={section.key} title={section.title} count={section.items.length} itemsLabel={itemsLabel(section.items.length)}>
+                <ItemsTable items={section.items} canSeeCost={canSeeCost} canManage={canManage} onEdit={openEdit} onDeactivate={handleDeactivate} onImageClick={setLightboxItem}
+                  qtyLabel={t('items.totalUnits')} headers={tableHeaders} t={t} />
+              </GroupSection>
+            ))}
+          </div>
+        )
+      ) : (
         base.length === 0 ? (
           <div className="bg-white rounded-2xl border border-gray-100 overflow-hidden">
             <p className="text-center text-gray-400 py-16 text-sm">{anyFilterActive ? t('items.noItemsMatch') : t('items.noItemsYet')}</p>
