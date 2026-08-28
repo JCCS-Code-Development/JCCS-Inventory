@@ -82,6 +82,26 @@ if ($method === 'PATCH') {
         $fieldSets[] = 'project_id = ?';
         $fieldParams[] = $projectId;
     }
+    if (array_key_exists('vendor_id', $body)) {
+        $vendorId = !empty($body['vendor_id']) ? (int)$body['vendor_id'] : null;
+        if ($vendorId) {
+            $chk = $pdo->prepare('SELECT 1 FROM vendors WHERE id = ?');
+            $chk->execute([$vendorId]);
+            if (!$chk->fetch()) { http_response_code(422); exit(json_encode(['error' => 'Unknown vendor'])); }
+        }
+        $fieldSets[] = 'vendor_id = ?';
+        $fieldParams[] = $vendorId;
+    }
+    if (array_key_exists('item_id', $body)) {
+        $itemId = !empty($body['item_id']) ? (int)$body['item_id'] : null;
+        if ($itemId) {
+            $chk = $pdo->prepare('SELECT 1 FROM items WHERE id = ?');
+            $chk->execute([$itemId]);
+            if (!$chk->fetch()) { http_response_code(422); exit(json_encode(['error' => 'Unknown item'])); }
+        }
+        $fieldSets[] = 'item_id = ?';
+        $fieldParams[] = $itemId;
+    }
     if (array_key_exists('product_link', $body)) {
         $productLink = trim((string)($body['product_link'] ?? ''));
         if ($productLink !== '' && !preg_match('#^https?://#i', $productLink)) {

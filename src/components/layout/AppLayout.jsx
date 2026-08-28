@@ -97,7 +97,6 @@ export default function AppLayout() {
       { to: '/receiving', icon: <ReceiveIcon />, label: t('nav.receiving') },
     ] : [
       { to: '/items',    icon: <ItemsIcon />,    label: t('nav.items') },
-      { to: '/requests', icon: <RequestsIcon />, label: t('nav.requests') },
     ]),
   ]
 

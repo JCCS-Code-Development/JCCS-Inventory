@@ -63,6 +63,41 @@ if ($method === 'GET') {
     $destination = !empty($body['destination_location_id']) ? (int)$body['destination_location_id'] : null;
     $vendorId    = !empty($body['vendor_id']) ? (int)$body['vendor_id'] : null;
 
+    // Optionally built from a batch of "Ready to Order" request tickets. They
+    // must all still be open and all share one vendor (the app confines the
+    // selection to a single vendor group) — that shared vendor is the order's
+    // vendor. Each one gets marked 'ordered' and linked to this order inside
+    // the same transaction below.
+    $requestIds = [];
+    $sourceRequests = [];
+    if (!empty($body['request_ids']) && is_array($body['request_ids'])) {
+        $requestIds = array_values(array_unique(array_map('intval', $body['request_ids'])));
+        $requestIds = array_filter($requestIds, fn($x) => $x > 0);
+    }
+    if ($requestIds) {
+        $ph   = implode(',', array_fill(0, count($requestIds), '?'));
+        $rqStmt = $pdo->prepare("SELECT id, status, vendor_id FROM order_requests WHERE id IN ($ph)");
+        $rqStmt->execute(array_values($requestIds));
+        $sourceRequests = $rqStmt->fetchAll();
+
+        if (count($sourceRequests) !== count($requestIds)) {
+            http_response_code(422); exit(json_encode(['error' => 'One or more requests no longer exist']));
+        }
+        foreach ($sourceRequests as $r) {
+            if ($r['status'] !== 'open') {
+                http_response_code(422); exit(json_encode(['error' => 'One or more requests have already been resolved']));
+            }
+        }
+        $reqVendors = array_values(array_unique(array_map(fn($r) => (int)$r['vendor_id'], $sourceRequests)));
+        if (count($reqVendors) !== 1 || $reqVendors[0] === 0) {
+            http_response_code(422); exit(json_encode(['error' => 'All selected requests must be from the same vendor']));
+        }
+        if ($vendorId && $vendorId !== $reqVendors[0]) {
+            http_response_code(422); exit(json_encode(['error' => 'Order vendor does not match the selected requests']));
+        }
+        $vendorId = $reqVendors[0];
+    }
+
     if ($orderType === 'dropoff') {
         if (!$vendorId)     { http_response_code(422); exit(json_encode(['error' => 'Choose where it was purchased from'])); }
         if (!$purchasedBy)  { http_response_code(422); exit(json_encode(['error' => 'Choose who purchased it'])); }
@@ -106,12 +141,32 @@ if ($method === 'GET') {
         $orderId = (int)$pdo->lastInsertId();
 
         $lineStmt = $pdo->prepare('INSERT INTO order_items (order_id, item_id, qty_ordered, unit_cost) VALUES (?, ?, ?, ?)');
+        $lineCount = 0;
         foreach ($items as $line) {
             if (empty($line['item_id']) || empty($line['qty_ordered'])) continue;
             $lineStmt->execute([
                 $orderId, (int)$line['item_id'], (float)$line['qty_ordered'],
                 isset($line['unit_cost']) && $line['unit_cost'] !== '' ? (float)$line['unit_cost'] : null,
             ]);
+            $lineCount++;
+        }
+        if ($lineCount === 0) { http_response_code(422); exit(json_encode(['error' => 'Order needs at least one valid line item'])); }
+
+        // Close the loop on every source request in the same transaction — a
+        // half-linked batch (order saved but some tickets left open) is worse
+        // than the whole thing rolling back.
+        if ($requestIds) {
+            $resolveStmt = $pdo->prepare(
+                "UPDATE order_requests
+                 SET status = 'ordered', order_id = ?, resolved_by = ?, resolved_at = NOW()
+                 WHERE id = ? AND status = 'open'"
+            );
+            foreach ($requestIds as $rid) {
+                $resolveStmt->execute([$orderId, $auth['user_id'], $rid]);
+                if ($resolveStmt->rowCount() !== 1) {
+                    throw new RuntimeException('Request ' . $rid . ' could not be linked');
+                }
+            }
         }
 
         $pdo->commit();

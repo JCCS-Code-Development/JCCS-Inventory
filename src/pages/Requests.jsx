@@ -11,33 +11,81 @@ import Spinner from '../components/ui/Spinner'
 import TranslatableText from '../components/ui/TranslatableText'
 import EstimateNumberField from '../components/ui/EstimateNumberField'
 import LinkPreviewCard from '../components/ui/LinkPreviewCard'
+import SearchSelect from '../components/ui/SearchSelect'
 import Tag from '../components/ui/Tag'
 import { listRequests, createRequest, resolveRequest, updateRequestReview, undoDeclineRequest, deleteRequest } from '../api/requests'
 import { listOrders } from '../api/orders'
-import { useAuthStore } from '../store/authStore'
+import { listVendors, createVendor } from '../api/vendors'
+import { listItems, createItem } from '../api/items'
 import { useBadgeStore } from '../store/badgeStore'
 import { formatDateTime } from '../utils/format'
 import { useConfirm } from '../components/ConfirmProvider'
 import { useToast } from '../components/ToastProvider'
 
-const EMPTY = { description: '', qty_requested: '', unit_of_measure: '', vendor_hint: '', notes: '', project_note: '', product_link: '' }
+const EMPTY = { description: '', qty_requested: '', unit_of_measure: '', notes: '', project_note: '', product_link: '' }
 
 // Every request is for the same warehouse in practice (1200 Woodruff Rd.) —
 // see api/requests/index.php, which resolves that automatically — so this
 // isn't a per-ticket choice any more and there's no location field here.
 const UNIT_OPTIONS = ['each', 'box', 'case', 'roll', 'gallon', 'bag', 'sheet', 'ft', 'yard', 'pallet', 'set', 'pair', 'tube', 'bundle']
 
-// The "I need this ordered" ticket form — shared between the worker's own
-// page, the Inventory Lead's "+ New Request" modal, and the Lead's "Edit
-// Request" modal for an existing ticket. `showReviewFields` only ever comes
-// in true for the Lead — the project (+ a plain-language note about which
-// job it's for, in case the Estimate # itself isn't confirmed yet) and
-// product link are what get pinned down while the Lead and requester sit
-// down together, so a plain worker never sees them here.
+// The "I need this ordered" ticket form — used for both the "+ New Request"
+// modal and the "Edit Request" modal. Every request is a lead/admin tool
+// now: the vendor to buy from, the catalog item it maps to, and the product
+// link are all set right here (a request isn't "ready to order" until all
+// three are filled in), alongside the optional project.
 function RequestForm({
-  form, set, error, saving, onSubmit, t, showReviewFields, onProjectResolved,
-  initialProjectNumber = '', initialProjectName = '', submitLabel,
+  form, set, error, saving, onSubmit, t, submitLabel,
+  vendors, setVendors, items, setItems,
+  vendorId, onVendorId, itemId, onItemId,
+  onProjectResolved, initialProjectNumber = '', initialProjectName = '',
 }) {
+  const [vendorSearch, setVendorSearch] = useState('')
+  const [creatingVendor, setCreatingVendor] = useState(false)
+  const [itemSearch, setItemSearch] = useState('')
+  const [showCreateItem, setShowCreateItem] = useState(false)
+  const [newSku, setNewSku] = useState('')
+  const [newName, setNewName] = useState('')
+  const [creatingItem, setCreatingItem] = useState(false)
+
+  const selectedVendor = vendors.find(v => String(v.id) === String(vendorId)) || null
+  const vendorMatches = vendorSearch.trim()
+    ? vendors.filter(v => v.name.toLowerCase().includes(vendorSearch.trim().toLowerCase()))
+    : []
+  const vendorExact = vendors.some(v => v.name.toLowerCase() === vendorSearch.trim().toLowerCase())
+  const handleCreateVendor = async () => {
+    const name = vendorSearch.trim()
+    if (!name) return
+    setCreatingVendor(true)
+    try {
+      const { id } = await createVendor({ name })
+      const vendor = { id, name }
+      setVendors(vs => [...vs, vendor])
+      onVendorId(id)
+      setVendorSearch('')
+    } catch { /* toast handled by caller context is overkill here; surface inline */ }
+    finally { setCreatingVendor(false) }
+  }
+
+  const selectedItem = items.find(it => String(it.id) === String(itemId)) || null
+  const itemMatches = itemSearch.trim()
+    ? items.filter(it => `${it.sku} ${it.name}`.toLowerCase().includes(itemSearch.trim().toLowerCase()))
+    : []
+  const itemExact = items.some(it => it.sku.toLowerCase() === itemSearch.trim().toLowerCase())
+  const handleCreateItem = async () => {
+    const sku = newSku.trim(), name = newName.trim()
+    if (!sku || !name) return
+    setCreatingItem(true)
+    try {
+      const { id } = await createItem({ sku, name })
+      const item = { id, sku, name, unit_of_measure: 'each' }
+      setItems(its => [...its, item])
+      onItemId(id)
+      setItemSearch(''); setShowCreateItem(false); setNewSku(''); setNewName('')
+    } catch { /* surfaced via the disabled state / retry */ }
+    finally { setCreatingItem(false) }
+  }
+
   return (
     <form onSubmit={onSubmit} className="flex flex-col gap-4">
       <div className="flex flex-col gap-1">
@@ -62,25 +110,70 @@ function RequestForm({
         </div>
       </div>
 
-      <Input label={t('requests.vendorHintOptional')} placeholder={t('requests.vendorHintPlaceholder')} value={form.vendor_hint} onChange={set('vendor_hint')} />
-
       <Input label={t('requests.anythingElseOptional')} value={form.notes} onChange={set('notes')} />
 
-      {showReviewFields && (
-        <div className="flex flex-col gap-4 pt-2 border-t border-gray-100">
-          <p className="text-xs font-semibold text-gray-500 -mb-1">{t('requests.reviewSectionTitle')}</p>
-          <EstimateNumberField label={t('requests.projectOptional')}
-            initialNumber={initialProjectNumber} initialName={initialProjectName}
-            onResolved={onProjectResolved} helperText={t('requests.projectHelper')} />
-          <Input label={t('requests.projectNoteOptional')} placeholder={t('requests.projectNotePlaceholder')}
-            value={form.project_note} onChange={set('project_note')} helperText={t('requests.projectNoteHelper')} />
-          <div className="flex flex-col gap-1.5">
-            <Input label={t('requests.productLinkOptional')} type="url" placeholder={t('requests.productLinkPlaceholder')}
-              value={form.product_link} onChange={set('product_link')} />
-            <LinkPreviewCard url={form.product_link} />
-          </div>
+      <div className="flex flex-col gap-4 pt-2 border-t border-gray-100">
+        <p className="text-xs font-semibold text-gray-500 -mb-1">{t('requests.reviewSectionTitle')}</p>
+
+        <div className="flex flex-col gap-1">
+          <label className="text-sm font-medium text-gray-700">{t('requests.vendorLabel')}</label>
+          <SearchSelect
+            selected={selectedVendor ? { id: selectedVendor.id, label: selectedVendor.name } : null}
+            onClear={() => onVendorId(null)}
+            search={vendorSearch} onSearchChange={setVendorSearch}
+            results={vendorMatches.map(v => ({ id: v.id, label: v.name }))}
+            onPick={(r) => { onVendorId(r.id); setVendorSearch('') }}
+            placeholder={t('requests.searchVendorPlaceholder')}
+            renderCreate={vendorSearch.trim() && !vendorExact && (
+              <Button type="button" variant="secondary" size="sm" loading={creatingVendor} onClick={handleCreateVendor} className="m-1 w-fit">
+                {t('requests.createVendor', { name: vendorSearch.trim() })}
+              </Button>
+            )}
+          />
         </div>
-      )}
+
+        <div className="flex flex-col gap-1">
+          <label className="text-sm font-medium text-gray-700">{t('requests.itemLabel')}</label>
+          <SearchSelect
+            selected={selectedItem ? { id: selectedItem.id, label: selectedItem.name, sublabel: selectedItem.sku } : null}
+            onClear={() => onItemId(null)}
+            search={itemSearch} onSearchChange={setItemSearch}
+            results={itemMatches.map(it => ({ id: it.id, label: it.name, sublabel: it.sku }))}
+            onPick={(r) => { onItemId(r.id); setItemSearch('') }}
+            placeholder={t('requests.searchItemPlaceholder')}
+            renderCreate={itemSearch.trim() && !itemExact && (
+              showCreateItem ? (
+                <div className="flex flex-col gap-1.5 p-1">
+                  <input type="text" placeholder={t('common.sku')} value={newSku} onChange={(e) => setNewSku(e.target.value)}
+                    className="rounded-lg border border-gray-300 px-2.5 py-1.5 text-sm outline-none focus:border-brand-500" />
+                  <input type="text" placeholder={t('common.name')} value={newName} onChange={(e) => setNewName(e.target.value)}
+                    className="rounded-lg border border-gray-300 px-2.5 py-1.5 text-sm outline-none focus:border-brand-500" />
+                  <Button type="button" variant="secondary" size="sm" loading={creatingItem}
+                    disabled={!newSku.trim() || !newName.trim()} onClick={handleCreateItem} className="w-fit">
+                    {t('orders.createAndUse')}
+                  </Button>
+                </div>
+              ) : (
+                <Button type="button" variant="secondary" size="sm"
+                  onClick={() => { setShowCreateItem(true); setNewName(itemSearch.trim()) }} className="m-1 w-fit">
+                  {t('orders.createNewItem', { name: itemSearch.trim() })}
+                </Button>
+              )
+            )}
+          />
+        </div>
+
+        <EstimateNumberField label={t('requests.projectOptional')}
+          initialNumber={initialProjectNumber} initialName={initialProjectName}
+          onResolved={onProjectResolved} helperText={t('requests.projectHelper')} />
+        <Input label={t('requests.projectNoteOptional')} placeholder={t('requests.projectNotePlaceholder')}
+          value={form.project_note} onChange={set('project_note')} helperText={t('requests.projectNoteHelper')} />
+        <div className="flex flex-col gap-1.5">
+          <Input label={t('requests.productLinkLabel')} type="url" placeholder={t('requests.productLinkPlaceholder')}
+            value={form.product_link} onChange={set('product_link')} />
+          <LinkPreviewCard url={form.product_link} />
+        </div>
+      </div>
 
       {error && <p className="text-xs text-red-500">{error}</p>}
       <Button type="submit" loading={saving} fullWidth>{submitLabel ?? t('requests.submitRequest')}</Button>
@@ -91,11 +184,9 @@ function RequestForm({
 export default function Requests() {
   const { t } = useTranslation()
   const navigate = useNavigate()
-  const role = useAuthStore((s) => s.user?.role)
-  const isLead = role === 'specialist' || role === 'admin'
   const confirmDialog = useConfirm()
   const toast = useToast()
-  const refreshBadges = useBadgeStore((s) => s.refresh) // no-ops for a basic user's own session
+  const refreshBadges = useBadgeStore((s) => s.refresh)
 
   const STATUS_LABELS = {
     open: t('requests.status.open'), ordered: t('requests.status.ordered'), declined: t('requests.status.declined'),
@@ -103,13 +194,18 @@ export default function Requests() {
 
   const [requests, setRequests] = useState([])
   const [orders, setOrders] = useState([])
+  const [vendors, setVendors] = useState([])
+  const [items, setItems] = useState([])
   const [loading, setLoading] = useState(true)
-  const [tab, setTab] = useState('open') // lead only: 'open' | 'ordered' | 'declined' | 'all'
+  const [tab, setTab] = useState('open') // 'open' | 'ordered' | 'declined' | 'all'
 
   const [form, setForm] = useState(EMPTY)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
-  const [modalOpen, setModalOpen] = useState(false) // lead's "+ New Request" modal
+  const [modalOpen, setModalOpen] = useState(false)
+  const [newVendorId, setNewVendorId] = useState(null)
+  const [newItemId, setNewItemId] = useState(null)
+  const [newProjectId, setNewProjectId] = useState(null)
 
   const [decliningId, setDecliningId] = useState(null)
   const [declineReason, setDeclineReason] = useState('')
@@ -117,66 +213,70 @@ export default function Requests() {
   const [linkOrderId, setLinkOrderId] = useState('')
   const [actingId, setActingId] = useState(null)
 
-  // The resolved project id for the create form (worker page never renders
-  // this field, so it stays unused there) — separate from `form` because
-  // EstimateNumberField reports the resolved project object, not a plain value.
-  const [newRequestProjectId, setNewRequestProjectId] = useState(null)
-
-  // Lead's "Edit Request" modal — every ticket field, editable independent
-  // of status. `editing` is the full request row being edited, or null.
+  // "Edit Request" modal — every ticket field, editable independent of status.
   const [editing, setEditing] = useState(null)
   const [editForm, setEditForm] = useState(EMPTY)
+  const [editVendorId, setEditVendorId] = useState(null)
+  const [editItemId, setEditItemId] = useState(null)
   const [editProjectId, setEditProjectId] = useState(null)
   const [editSaving, setEditSaving] = useState(false)
   const [editError, setEditError] = useState('')
 
   const load = () => {
     setLoading(true)
-    listRequests(isLead && tab !== 'all' ? { status: tab } : {})
+    listRequests(tab !== 'all' ? { status: tab } : {})
       .then(d => setRequests(d.requests ?? []))
       .finally(() => setLoading(false))
   }
   useEffect(() => { load() }, [tab]) // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
-    if (isLead) listOrders().then(d => setOrders(d.orders ?? []))
-  }, [isLead])
+    listOrders().then(d => setOrders(d.orders ?? []))
+    listVendors({ active: 1 }).then(d => setVendors(d.vendors ?? []))
+    listItems({ active: 1 }).then(d => setItems(d.items ?? []))
+  }, [])
 
   const set = (k) => (e) => setForm(f => ({ ...f, [k]: e.target.value }))
+  const setEdit = (k) => (e) => setEditForm(f => ({ ...f, [k]: e.target.value }))
+
+  // Vendor + catalog item + a valid product link are what make a request
+  // "ready to order" — enforce all three here, not just server-side.
+  const validateReview = (f, vId, iId) => {
+    if (!f.description.trim()) return t('requests.describeWhatYouNeed')
+    if (!vId) return t('requests.vendorRequired')
+    if (!iId) return t('requests.itemRequired')
+    const link = f.product_link.trim()
+    if (!link || !/^https?:\/\//i.test(link)) return t('requests.productLinkRequired')
+    return ''
+  }
 
   const handleSubmit = async (e) => {
     e.preventDefault()
-    if (!form.description.trim()) { setError(t('requests.describeWhatYouNeed')); return }
+    const msg = validateReview(form, newVendorId, newItemId)
+    if (msg) { setError(msg); return }
     setSaving(true); setError('')
     try {
       await createRequest({
         description: form.description.trim(),
         qty_requested: form.qty_requested || null,
         unit_of_measure: form.unit_of_measure || null,
-        vendor_hint: form.vendor_hint || null,
         notes: form.notes || null,
-        ...(isLead ? {
-          project_id: newRequestProjectId || null,
-          project_note: form.project_note.trim() || null,
-          product_link: form.product_link.trim() || null,
-        } : {}),
+        vendor_id: newVendorId,
+        item_id: newItemId,
+        project_id: newProjectId || null,
+        project_note: form.project_note.trim() || null,
+        product_link: form.product_link.trim() || null,
       })
       toast.success(t('requests.submitted'))
       setForm(EMPTY)
-      setNewRequestProjectId(null)
+      setNewVendorId(null); setNewItemId(null); setNewProjectId(null)
       setModalOpen(false)
-      if (isLead && tab !== 'open' && tab !== 'all') setTab('open')
+      if (tab !== 'open' && tab !== 'all') setTab('open')
       else load()
-      refreshBadges(isLead)
+      refreshBadges(true)
     } catch (err) {
       setError(err?.response?.data?.error ?? t('common.couldNotSave'))
     } finally { setSaving(false) }
-  }
-
-  const handleCancel = async (r) => {
-    if (!await confirmDialog(t('requests.cancelConfirm'), { danger: true, confirmLabel: t('common.delete') })) return
-    try { await deleteRequest(r.id); load(); refreshBadges(isLead) }
-    catch (err) { toast.error(err?.response?.data?.error ?? t('common.couldNotSave')) }
   }
 
   const handleCreateOrder = (r) => navigate('/orders', { state: { fromRequest: r } })
@@ -185,7 +285,7 @@ export default function Requests() {
   const cancelDecline = () => { setDecliningId(null); setDeclineReason('') }
   const confirmDecline = async (id) => {
     setActingId(id)
-    try { await resolveRequest(id, { status: 'declined', decline_reason: declineReason.trim() || null }); setDecliningId(null); load(); refreshBadges(isLead) }
+    try { await resolveRequest(id, { status: 'declined', decline_reason: declineReason.trim() || null }); setDecliningId(null); load(); refreshBadges(true) }
     catch (err) { toast.error(err?.response?.data?.error ?? t('common.couldNotSave')) }
     finally { setActingId(null) }
   }
@@ -195,7 +295,7 @@ export default function Requests() {
   const confirmLink = async (id) => {
     if (!linkOrderId) return
     setActingId(id)
-    try { await resolveRequest(id, { status: 'ordered', order_id: linkOrderId }); setLinkingId(null); load(); refreshBadges(isLead) }
+    try { await resolveRequest(id, { status: 'ordered', order_id: linkOrderId }); setLinkingId(null); load(); refreshBadges(true) }
     catch (err) { toast.error(err?.response?.data?.error ?? t('common.couldNotSave')) }
     finally { setActingId(null) }
   }
@@ -206,34 +306,35 @@ export default function Requests() {
       description: r.description ?? '',
       qty_requested: r.qty_requested ?? '',
       unit_of_measure: r.unit_of_measure ?? '',
-      vendor_hint: r.vendor_hint ?? '',
       notes: r.notes ?? '',
       project_note: r.project_note ?? '',
       product_link: r.product_link ?? '',
     })
+    setEditVendorId(r.vendor_id ?? null)
+    setEditItemId(r.item_id ?? null)
     setEditProjectId(r.project_id ?? null)
     setEditError('')
   }
-  const setEdit = (k) => (e) => setEditForm(f => ({ ...f, [k]: e.target.value }))
   const handleEditSubmit = async (e) => {
     e.preventDefault()
-    if (!editForm.description.trim()) { setEditError(t('requests.describeWhatYouNeed')); return }
+    const msg = validateReview(editForm, editVendorId, editItemId)
+    if (msg) { setEditError(msg); return }
     setEditSaving(true); setEditError('')
     try {
       await updateRequestReview(editing.id, {
         description: editForm.description.trim(),
         qty_requested: editForm.qty_requested || null,
         unit_of_measure: editForm.unit_of_measure || null,
-        vendor_hint: editForm.vendor_hint || null,
-        location_id: editForm.location_id || null,
         notes: editForm.notes || null,
         project_note: editForm.project_note.trim() || null,
         product_link: editForm.product_link.trim() || null,
+        vendor_id: editVendorId,
+        item_id: editItemId,
         project_id: editProjectId || null,
       })
       toast.success(t('requests.detailsSaved'))
       setEditing(null)
-      load()
+      load(); refreshBadges(true)
     } catch (err) { setEditError(err?.response?.data?.error ?? t('common.couldNotSave')) }
     finally { setEditSaving(false) }
   }
@@ -243,10 +344,15 @@ export default function Requests() {
     try {
       await undoDeclineRequest(r.id)
       toast.success(t('requests.declineUndone'))
-      load()
-      refreshBadges(isLead)
+      load(); refreshBadges(true)
     } catch (err) { toast.error(err?.response?.data?.error ?? t('common.couldNotSave')) }
     finally { setActingId(null) }
+  }
+
+  const handleDeleteRequest = async (r) => {
+    if (!await confirmDialog(t('requests.cancelConfirm'), { danger: true, confirmLabel: t('common.delete') })) return
+    try { await deleteRequest(r.id); load(); refreshBadges(true) }
+    catch (err) { toast.error(err?.response?.data?.error ?? t('common.couldNotSave')) }
   }
 
   const badgeVariant = { open: 'request_open', ordered: 'request_ordered', declined: 'request_declined' }
@@ -255,7 +361,7 @@ export default function Requests() {
     <div className="rounded-2xl border border-gray-100 bg-white p-4 flex flex-col gap-3">
       <div className="flex items-start justify-between gap-2">
         <div className="min-w-0">
-          {isLead && <p className="text-sm font-semibold text-gray-900">{r.requested_by_name ?? t('requests.unknownRequester')}</p>}
+          <p className="text-sm font-semibold text-gray-900">{r.requested_by_name ?? t('requests.unknownRequester')}</p>
           <p className="text-xs text-gray-500">{formatDateTime(r.created_at)}</p>
         </div>
         <Badge variant={badgeVariant[r.status]}>{STATUS_LABELS[r.status]}</Badge>
@@ -265,19 +371,25 @@ export default function Requests() {
 
       <div className="flex flex-wrap gap-1.5">
         {r.qty_requested != null && <Tag>{t('requests.qtyLabel', { qty: r.qty_requested, unit: r.unit_of_measure || '' })}</Tag>}
-        {r.vendor_hint && <Tag tone="blue">{t('requests.vendorHintLabel', { vendor: r.vendor_hint })}</Tag>}
-        {r.location_name && <Tag>{t('requests.neededAtLabel', { location: r.location_name })}</Tag>}
+        {r.vendor_name && <Tag tone="blue">{t('requests.vendorTag', { vendor: r.vendor_name })}</Tag>}
+        {r.item_sku && <Tag>{r.item_sku} — {r.item_name}</Tag>}
         {r.project_number && <Tag tone="brand">{t('requests.projectLabel', { number: r.project_number, name: r.project_name })}</Tag>}
       </div>
       {r.project_note && <p className="text-xs font-medium text-gray-600">{t('requests.projectNoteLabel', { note: r.project_note })}</p>}
       {r.notes && <TranslatableText text={r.notes} className="text-xs text-gray-600 italic" />}
       {r.product_link && <LinkPreviewCard url={r.product_link} />}
 
-      {isLead && (
+      <div className="flex flex-wrap gap-2">
         <Button size="sm" variant="secondary" onClick={() => startEdit(r)} className="w-fit">
           {t('requests.editRequest')}
         </Button>
-      )}
+        {r.status === 'open' && (
+          <button type="button" onClick={() => handleDeleteRequest(r)}
+            className="inline-flex items-center justify-center gap-2 font-semibold text-sm px-3 py-1.5 rounded-lg border border-red-200 text-red-600 bg-white hover:bg-red-50 transition-colors">
+            {t('requests.cancelRequest')}
+          </button>
+        )}
+      </div>
 
       {r.status === 'ordered' && r.order_number && (
         <p className="text-xs font-semibold text-brand-700">{t('requests.orderedAs', { order: r.order_number })}</p>
@@ -288,22 +400,13 @@ export default function Requests() {
             <p>{t('requests.declinedBy', { name: r.resolved_by_name ?? '—' })}</p>
             {r.decline_reason && <TranslatableText text={r.decline_reason} className="text-gray-600 italic mt-0.5" />}
           </div>
-          {isLead && (
-            <Button size="sm" variant="secondary" onClick={() => handleUndoDecline(r)} loading={actingId === r.id} className="shrink-0">
-              {t('requests.undoDecline')}
-            </Button>
-          )}
+          <Button size="sm" variant="secondary" onClick={() => handleUndoDecline(r)} loading={actingId === r.id} className="shrink-0">
+            {t('requests.undoDecline')}
+          </Button>
         </div>
       )}
 
-      {r.status === 'open' && !isLead && (
-        <button type="button" onClick={() => handleCancel(r)}
-          className="inline-flex items-center justify-center gap-2 font-semibold text-sm px-3 py-1.5 rounded-lg border border-red-200 text-red-600 bg-white hover:bg-red-50 transition-colors w-fit">
-          {t('requests.cancelRequest')}
-        </button>
-      )}
-
-      {r.status === 'open' && isLead && (
+      {r.status === 'open' && (
         <div className="flex flex-col gap-2 pt-2 border-t border-gray-100 mt-1">
           {decliningId === r.id ? (
             <div className="flex flex-col gap-2">
@@ -344,57 +447,45 @@ export default function Requests() {
 
   return (
     <div className="w-full">
-      <PageHeader title={t('requests.title')} subtitle={t(isLead ? 'requests.subtitleLead' : 'requests.subtitleWorker')}
-        actions={isLead && <Button onClick={() => { setForm(EMPTY); setNewRequestProjectId(null); setError(''); setModalOpen(true) }}>{t('requests.newRequest')}</Button>} />
+      <PageHeader title={t('requests.title')} subtitle={t('requests.subtitleLead')}
+        actions={<Button onClick={() => { setForm(EMPTY); setNewVendorId(null); setNewItemId(null); setNewProjectId(null); setError(''); setModalOpen(true) }}>{t('requests.newRequest')}</Button>} />
 
-      <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,26rem)_1fr] gap-6 items-start">
-        {!isLead && (
-          <Card title={t('requests.whatDoYouNeed')}>
-            <RequestForm form={form} set={set} error={error} saving={saving} onSubmit={handleSubmit} t={t} />
-          </Card>
-        )}
-
-        <div className={isLead ? 'lg:col-span-2' : ''}>
-          {isLead && (
-            <div className="flex gap-2 mb-4 flex-wrap">
-              {[['open', t('requests.tabOpen')], ['ordered', t('requests.tabOrdered')], ['declined', t('requests.tabDeclined')], ['all', t('orders.tabAll')]].map(([val, label]) => (
-                <button key={val} type="button" onClick={() => setTab(val)}
-                  className={`px-4 py-2 rounded-xl text-sm font-semibold transition-colors ${
-                    tab === val ? 'bg-brand-500 text-white' : 'bg-white border border-gray-200 text-gray-600 hover:border-gray-300'
-                  }`}>
-                  {label}
-                </button>
-              ))}
-            </div>
-          )}
-
-          {!isLead && <h2 className="text-sm font-semibold text-gray-700 mb-3">{t('requests.myRequests')}</h2>}
-
-          {loading ? (
-            <div className="flex justify-center py-16"><Spinner size="lg" /></div>
-          ) : requests.length === 0 ? (
-            <Card>
-              <p className="text-sm text-gray-400 py-8 text-center">
-                {isLead ? t('requests.noneInTab') : t('requests.noneYet')}
-              </p>
-            </Card>
-          ) : (
-            <div className="flex flex-col gap-3">
-              {requests.map(r => <RequestCard key={r.id} r={r} />)}
-            </div>
-          )}
-        </div>
+      <div className="flex gap-2 mb-4 flex-wrap">
+        {[['open', t('requests.tabOpen')], ['ordered', t('requests.tabOrdered')], ['declined', t('requests.tabDeclined')], ['all', t('orders.tabAll')]].map(([val, label]) => (
+          <button key={val} type="button" onClick={() => setTab(val)}
+            className={`px-4 py-2 rounded-xl text-sm font-semibold transition-colors ${
+              tab === val ? 'bg-brand-500 text-white' : 'bg-white border border-gray-200 text-gray-600 hover:border-gray-300'
+            }`}>
+            {label}
+          </button>
+        ))}
       </div>
+
+      {loading ? (
+        <div className="flex justify-center py-16"><Spinner size="lg" /></div>
+      ) : requests.length === 0 ? (
+        <Card>
+          <p className="text-sm text-gray-400 py-8 text-center">{t('requests.noneInTab')}</p>
+        </Card>
+      ) : (
+        <div className="flex flex-col gap-3">
+          {requests.map(r => <RequestCard key={r.id} r={r} />)}
+        </div>
+      )}
 
       <Modal isOpen={modalOpen} onClose={() => setModalOpen(false)} title={t('requests.newRequest')}>
         <RequestForm form={form} set={set} error={error} saving={saving} onSubmit={handleSubmit} t={t}
-          showReviewFields={isLead} onProjectResolved={(project) => setNewRequestProjectId(project ? project.id : null)} />
+          vendors={vendors} setVendors={setVendors} items={items} setItems={setItems}
+          vendorId={newVendorId} onVendorId={setNewVendorId} itemId={newItemId} onItemId={setNewItemId}
+          onProjectResolved={(project) => setNewProjectId(project ? project.id : null)} />
       </Modal>
 
       <Modal isOpen={!!editing} onClose={() => setEditing(null)} title={t('requests.editRequest')}>
         {editing && (
           <RequestForm form={editForm} set={setEdit} error={editError} saving={editSaving} onSubmit={handleEditSubmit} t={t}
-            showReviewFields initialProjectNumber={editing.project_number ?? ''} initialProjectName={editing.project_name ?? ''}
+            vendors={vendors} setVendors={setVendors} items={items} setItems={setItems}
+            vendorId={editVendorId} onVendorId={setEditVendorId} itemId={editItemId} onItemId={setEditItemId}
+            initialProjectNumber={editing.project_number ?? ''} initialProjectName={editing.project_name ?? ''}
             onProjectResolved={(project) => setEditProjectId(project ? project.id : null)}
             submitLabel={t('requests.saveChanges')} />
         )}

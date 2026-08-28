@@ -35,10 +35,10 @@ export default function App() {
           <Route path="/" element={<Dashboard />} />
           <Route path="/take-dropoff" element={<TakeDropoff />} />
           <Route path="/items" element={<Items />} />
-          <Route path="/requests" element={<Requests />} />
 
-          {/* Specialist + admin: receiving, order tracking, reports */}
+          {/* Specialist + admin: requests, receiving, order tracking, reports */}
           <Route element={<RoleRoute allowedRoles={['specialist', 'admin']} />}>
+            <Route path="/requests" element={<Requests />} />
             <Route path="/receiving" element={<Receiving />} />
             <Route path="/counts" element={<Counts />} />
             <Route path="/orders" element={<Orders />} />

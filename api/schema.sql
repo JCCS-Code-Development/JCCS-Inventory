@@ -225,25 +225,28 @@ CREATE TABLE `order_discrepancy_items` (
   CONSTRAINT `fk_discrepancy_item_item`   FOREIGN KEY (`item_id`)   REFERENCES `items` (`id`)                    ON DELETE SET NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
--- The "I need something ordered" ticket a regular worker can't place an
--- order themselves for. No catalog item_id link on purpose — a worker
--- rarely knows the exact SKU, so this stays plain free text (description +
--- optional qty/unit/vendor hint) and it's on the Inventory Lead to turn it
--- into a real order line once they know what to actually buy. order_id is
--- only set once that happens, closing the loop back to this ticket.
+-- The "I need something ordered" ticket. Created by an Inventory Lead / admin
+-- only (basic workers don't file these any more). Starts as plain free text
+-- (description + optional qty/unit) and the Lead pins the rest down during
+-- review: which vendor to buy from, the specific product page, the catalog
+-- item it maps to, and optionally which job it's for. order_id is set once
+-- the request has been rolled into a real order, closing the loop.
 --
--- project_id/product_link are filled in by the Inventory Lead, not the
--- requester — they get set while the two of them sit down together and go
--- over exactly what's needed: which job it's for, and the specific product
--- page they agreed on. Enforced server-side (see api/requests/index.php,
--- item.php), not just by the UI hiding the fields from a basic user.
+-- vendor_id/item_id/product_link are the review fields — a request is only
+-- "ready to order" once vendor + product_link + item_id are all set. Setting
+-- the catalog item at review (not later) is what keeps Receiving working:
+-- an order built from requests carries real order_items, matched on item_id.
+-- vendor_hint is kept as harmless free-text context; vendor_id is the real
+-- link. Enforced server-side (see api/requests/index.php, item.php).
 CREATE TABLE `order_requests` (
   `id`               INT UNSIGNED  NOT NULL AUTO_INCREMENT,
   `requested_by`     INT UNSIGNED  NOT NULL,
   `description`      VARCHAR(500)  NOT NULL,
   `qty_requested`    DECIMAL(12,2) NULL,
   `unit_of_measure`  VARCHAR(30)   NULL,
-  `vendor_hint`      VARCHAR(150)  NULL, -- "usually get these from Grainger" — a hint, not a formal vendor link
+  `vendor_hint`      VARCHAR(150)  NULL, -- "usually get these from Grainger" — free-text context, superseded by vendor_id at review
+  `vendor_id`        INT UNSIGNED  NULL, -- real vendor to buy from — set at review time
+  `item_id`          INT UNSIGNED  NULL, -- catalog item this maps to — set at review time, carried onto the order line
   `location_id`      INT UNSIGNED  NULL, -- where it's needed, if known
   `project_id`       INT UNSIGNED  NULL, -- job this is charged/tied to — set at review time
   -- Plain-language "what job this is for", independent of project_id/the
@@ -265,9 +268,13 @@ CREATE TABLE `order_requests` (
   KEY `idx_requests_requested_by` (`requested_by`),
   KEY `idx_requests_status` (`status`),
   KEY `idx_requests_project` (`project_id`),
+  KEY `idx_requests_vendor` (`vendor_id`),
+  KEY `idx_requests_item` (`item_id`),
   CONSTRAINT `fk_request_user`     FOREIGN KEY (`requested_by`) REFERENCES `inventory_user_roles` (`fieldclock_user_id`) ON DELETE CASCADE,
   CONSTRAINT `fk_request_location` FOREIGN KEY (`location_id`)  REFERENCES `locations` (`id`)                            ON DELETE SET NULL,
   CONSTRAINT `fk_request_project`  FOREIGN KEY (`project_id`)   REFERENCES `projects` (`id`)                             ON DELETE SET NULL,
+  CONSTRAINT `fk_request_vendor`   FOREIGN KEY (`vendor_id`)    REFERENCES `vendors` (`id`)                              ON DELETE SET NULL,
+  CONSTRAINT `fk_request_item`     FOREIGN KEY (`item_id`)      REFERENCES `items` (`id`)                                ON DELETE SET NULL,
   CONSTRAINT `fk_request_order`    FOREIGN KEY (`order_id`)     REFERENCES `orders` (`id`)                               ON DELETE SET NULL,
   CONSTRAINT `fk_request_resolver` FOREIGN KEY (`resolved_by`)  REFERENCES `inventory_user_roles` (`fieldclock_user_id`) ON DELETE SET NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
