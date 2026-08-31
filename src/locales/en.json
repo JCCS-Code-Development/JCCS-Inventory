@@ -398,6 +398,7 @@
     "tabOrdered": "Ordered",
     "tabDeclined": "Declined",
     "myRequests": "My Requests",
+    "multiSelectHint": "Tick the reviewed requests you want on one order — all from the same vendor — then use \"Create Order\" above.",
     "noneInTab": "Nothing here right now.",
     "noneYet": "You haven't asked for anything yet.",
     "fulfillingBanner": "Fulfilling a request from {{name}}",

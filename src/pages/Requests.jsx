@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import PageHeader from '../components/admin/PageHeader'
@@ -213,6 +213,30 @@ export default function Requests() {
   const [linkOrderId, setLinkOrderId] = useState('')
   const [actingId, setActingId] = useState(null)
 
+  // Multi-select on the Open tab: tick several reviewed requests and send
+  // them into one order. One order = one vendor, so the selection is
+  // confined to a single vendor (mirrors the Orders "Ready to Order" tab).
+  const [selectedIds, setSelectedIds] = useState(new Set())
+  const requestIsReady = (r) => !!(r.vendor_id && r.item_id && r.product_link)
+  const activeVendorName = (() => {
+    if (selectedIds.size === 0) return null
+    const first = requests.find(r => selectedIds.has(r.id))
+    return first ? first.vendor_name : null
+  })()
+  const toggleSelect = (r) => setSelectedIds(prev => {
+    const next = new Set(prev)
+    if (next.has(r.id)) next.delete(r.id)
+    else next.add(r.id)
+    return next
+  })
+  const clearSelection = () => setSelectedIds(new Set())
+  const selectedRequests = useMemo(
+    () => requests.filter(r => selectedIds.has(r.id)),
+    [requests, selectedIds],
+  )
+  const createOrderForSelected = () =>
+    navigate('/orders', { state: { fromRequests: selectedRequests } })
+
   // "Edit Request" modal — every ticket field, editable independent of status.
   const [editing, setEditing] = useState(null)
   const [editForm, setEditForm] = useState(EMPTY)
@@ -228,7 +252,7 @@ export default function Requests() {
       .then(d => setRequests(d.requests ?? []))
       .finally(() => setLoading(false))
   }
-  useEffect(() => { load() }, [tab]) // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { load(); clearSelection() }, [tab]) // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     listOrders().then(d => setOrders(d.orders ?? []))
@@ -357,14 +381,28 @@ export default function Requests() {
 
   const badgeVariant = { open: 'request_open', ordered: 'request_ordered', declined: 'request_declined' }
 
-  const RequestCard = ({ r }) => (
-    <div className="rounded-2xl border border-gray-100 bg-white p-4 flex flex-col gap-3">
+  const RequestCard = ({ r }) => {
+    const selectable = tab === 'open' && requestIsReady(r)
+    const locked = selectable && activeVendorName && r.vendor_name !== activeVendorName
+    const selected = selectedIds.has(r.id)
+    return (
+    <div className={`rounded-2xl border bg-white p-4 flex flex-col gap-3 transition-colors ${
+      selected ? 'border-brand-400 ring-1 ring-brand-100' : 'border-gray-100'
+    } ${locked ? 'opacity-50' : ''}`}>
       <div className="flex items-start justify-between gap-2">
         <div className="min-w-0">
           <p className="text-sm font-semibold text-gray-900">{r.requested_by_name ?? t('requests.unknownRequester')}</p>
           <p className="text-xs text-gray-500">{formatDateTime(r.created_at)}</p>
         </div>
-        <Badge variant={badgeVariant[r.status]}>{STATUS_LABELS[r.status]}</Badge>
+        <div className="flex items-center gap-2 shrink-0">
+          <Badge variant={badgeVariant[r.status]}>{STATUS_LABELS[r.status]}</Badge>
+          {selectable && (
+            <input type="checkbox" checked={selected} disabled={locked}
+              onChange={() => toggleSelect(r)}
+              aria-label={t('orders.selectForOrder')}
+              className="w-5 h-5 accent-brand-500 cursor-pointer disabled:cursor-not-allowed" />
+          )}
+        </div>
       </div>
 
       <TranslatableText text={r.description} className="text-sm text-gray-900" />
@@ -406,7 +444,7 @@ export default function Requests() {
         </div>
       )}
 
-      {r.status === 'open' && (
+      {r.status === 'open' && selectedIds.size === 0 && (
         <div className="flex flex-col gap-2 pt-2 border-t border-gray-100 mt-1">
           {decliningId === r.id ? (
             <div className="flex flex-col gap-2">
@@ -443,12 +481,25 @@ export default function Requests() {
         </div>
       )}
     </div>
-  )
+    )
+  }
 
   return (
     <div className="w-full">
       <PageHeader title={t('requests.title')} subtitle={t('requests.subtitleLead')}
-        actions={<Button onClick={() => { setForm(EMPTY); setNewVendorId(null); setNewItemId(null); setNewProjectId(null); setError(''); setModalOpen(true) }}>{t('requests.newRequest')}</Button>} />
+        actions={
+          <div className="flex gap-2">
+            {selectedIds.size > 0 && (
+              <Button onClick={createOrderForSelected}>
+                {t('orders.createOrderForSelectedVendor', { count: selectedIds.size, vendor: activeVendorName })}
+              </Button>
+            )}
+            <Button variant={selectedIds.size > 0 ? 'secondary' : 'primary'}
+              onClick={() => { setForm(EMPTY); setNewVendorId(null); setNewItemId(null); setNewProjectId(null); setError(''); setModalOpen(true) }}>
+              {t('requests.newRequest')}
+            </Button>
+          </div>
+        } />
 
       <div className="flex gap-2 mb-4 flex-wrap">
         {[['open', t('requests.tabOpen')], ['ordered', t('requests.tabOrdered')], ['declined', t('requests.tabDeclined')], ['all', t('orders.tabAll')]].map(([val, label]) => (
@@ -460,6 +511,19 @@ export default function Requests() {
           </button>
         ))}
       </div>
+
+      {tab === 'open' && (
+        activeVendorName ? (
+          <p className="text-xs text-gray-500 px-1 pb-3">
+            {t('orders.selectionLockedToVendor', { vendor: activeVendorName })}{' '}
+            <button type="button" onClick={clearSelection} className="font-semibold text-brand-600 hover:underline">
+              {t('orders.clearSelection')}
+            </button>
+          </p>
+        ) : (
+          <p className="text-xs text-gray-400 px-1 pb-3">{t('requests.multiSelectHint')}</p>
+        )
+      )}
 
       {loading ? (
         <div className="flex justify-center py-16"><Spinner size="lg" /></div>

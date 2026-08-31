@@ -248,11 +248,15 @@ export default function Orders() {
   }
   const startFromRequest = (req) => startFromRequests([req])
 
-  // Arrived via "Create Order" on a request ticket from the Requests page.
+  // Arrived via "Create Order" on the Requests page — either a single ticket
+  // or a multi-select batch (all one vendor).
   useEffect(() => {
-    const req = routerLocation.state?.fromRequest
-    if (!req || !canRegister) return
-    startFromRequest(req)
+    if (!canRegister) return
+    const many = routerLocation.state?.fromRequests
+    const one  = routerLocation.state?.fromRequest
+    if (Array.isArray(many) && many.length) startFromRequests(many)
+    else if (one) startFromRequest(one)
+    else return
     navigate(routerLocation.pathname, { replace: true, state: null })
     // eslint-disable-next-line react-hooks/exhaustive-deps -- run once on arrival only
   }, [])

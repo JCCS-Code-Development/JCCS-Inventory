@@ -398,6 +398,7 @@
     "tabOrdered": "Pedidas",
     "tabDeclined": "Rechazadas",
     "myRequests": "Mis Solicitudes",
+    "multiSelectHint": "Marca las solicitudes ya revisadas que quieres en un mismo pedido — todas del mismo proveedor — y usa \"Crear Pedido\" arriba.",
     "noneInTab": "No hay nada aquí por ahora.",
     "noneYet": "Todavía no has solicitado nada.",
     "fulfillingBanner": "Atendiendo una solicitud de {{name}}",
