@@ -96,37 +96,30 @@ export default function Orders() {
   const [decliningReadyId, setDecliningReadyId] = useState(null)
   const [declineReadyReason, setDeclineReadyReason] = useState('')
   const [readyActingId, setReadyActingId] = useState(null)
-  // Checkbox multi-select — combine several tickets into a single order
-  // instead of one order per request. A set of request ids, confined to a
-  // single vendor (one order = one vendor).
-  const [selectedReady, setSelectedReady] = useState(new Set())
 
   // Reviewed, still-open requests grouped by the vendor they'll be bought
-  // from — so the lead can buy everything for one vendor in a single order.
-  const readyByVendor = useMemo(() => {
+  // from — used both by the Ready to Order tab (a read-only worklist) and by
+  // the "Requests to fulfill" checklist inside the New Order modal.
+  const groupByVendor = (rows) => {
     const map = new Map()
-    for (const r of readyRequests) {
+    for (const r of rows) {
       const key = r.vendor_name || t('orders.unassignedVendor')
       if (!map.has(key)) map.set(key, [])
       map.get(key).push(r)
     }
     return [...map.entries()].sort(([a], [b]) => a.localeCompare(b))
-  }, [readyRequests, t])
+  }
+  const readyByVendor = useMemo(() => groupByVendor(readyRequests), [readyRequests]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  const activeVendorName = (() => {
-    if (selectedReady.size === 0) return null
-    const first = readyRequests.find(r => selectedReady.has(r.id))
-    return first ? (first.vendor_name || t('orders.unassignedVendor')) : null
-  })()
-
-  const toggleReadySelect = (req) => setSelectedReady(prev => {
-    const next = new Set(prev)
-    if (next.has(req.id)) { next.delete(req.id); return next }
-    next.add(req.id)
-    return next
-  })
-  const clearReadySelection = () => setSelectedReady(new Set())
-  const createOrderForSelected = () => startFromRequests(readyRequests.filter(r => selectedReady.has(r.id)))
+  // For the New Order modal's "Requests to fulfill" checklist — the pending
+  // reviewed requests, plus any already attached to this draft order (in
+  // case the freshest fetch hasn't landed yet), grouped by vendor.
+  const checklistByVendor = useMemo(() => {
+    const byId = new Map()
+    for (const r of readyRequests) byId.set(r.id, r)
+    for (const r of fromRequests) if (!byId.has(r.id)) byId.set(r.id, r)
+    return groupByVendor([...byId.values()])
+  }, [readyRequests, fromRequests]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── Discrepancies (missing/extra items found during receiving) ─────
   // Lives here instead of its own page — it's fundamentally order data,
@@ -197,7 +190,6 @@ export default function Orders() {
   // Re-fetch whenever the Ready tab is (re-)opened, on top of the mount fetch above.
   useEffect(() => {
     if (tab === 'ready') loadReady()
-    else setSelectedReady(new Set()) // don't carry a stale selection back in from another tab
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tab])
 
@@ -217,36 +209,43 @@ export default function Orders() {
     setLines([{ ...EMPTY_LINE }])
     setPendingAttachment(null); setAttachmentKind(null); setAttachmentPreviewUrl(null); setAttachmentFileName(''); setAttachmentError('')
     setOcrRunning(false); setOcrError(''); setOcrSuggestions(null)
-    setError(''); setFromRequests([]); setCreateOpen(true)
+    setError(''); setFromRequests([])
+    loadReady() // freshen the "Requests to fulfill" checklist
+    setCreateOpen(true)
   }
 
-  // Jumps straight into the create form with what was asked for already
-  // noted down, instead of making the Lead retype it — shared by the
-  // "Create Order" button on a single request ticket (Requests page,
-  // arrives via router state below), the Ready to Order tab's own per-row
-  // button, and its checkbox-driven "combine into one order" action. Every
-  // request handed in gets resolved to the same order once it's saved.
-  const startFromRequests = (reqs) => {
-    openCreate()
-    // Every request was reviewed with a real vendor and a real catalog item
-    // attached, so the order is essentially a checklist of the selected
-    // requests: vendor locked to the shared one, one line per request with
-    // its item already picked and the requested quantity pre-filled (still
-    // editable — round up to a case, etc.). The Lead can also append ad-hoc
-    // lines. Notes stays free for whatever the Lead wants to write about
-    // this order; what each request asked for shows in the read-only
-    // "Fulfilling" panel below.
-    const vendorId = reqs[0]?.vendor_id ? String(reqs[0].vendor_id) : ''
-    setForm({ ...EMPTY_FORM, vendor_id: vendorId })
-    setLines(reqs.map((req) => ({
-      ...EMPTY_LINE,
-      item_id: req.item_id ? String(req.item_id) : '',
-      itemSearch: req.item_id ? '' : req.description,
-      qty_ordered: req.qty_requested != null ? String(req.qty_requested) : '',
-    })))
+  // Keeps the order form in sync with which pending requests are ticked in
+  // the modal's "Requests to fulfill" checklist: vendor locks to the shared
+  // one, and each ticked request contributes one line item (its catalog
+  // item + the requested qty, still editable). Ad-hoc lines are preserved;
+  // an existing request line's edits are kept when other requests toggle.
+  const syncAttachedRequests = (reqs) => {
+    if (reqs.length) {
+      setForm(f => ({ ...f, vendor_id: reqs[0].vendor_id ? String(reqs[0].vendor_id) : '' }))
+    }
+    setLines(prev => {
+      // Keep only ad-hoc lines the lead actually started filling in — drop a
+      // pristine blank row so ticking requests yields exactly those lines.
+      const adhoc = prev.filter(l => !l.requestId && (l.item_id || l.qty_ordered || l.itemSearch.trim()))
+      const reqLines = reqs.map(req => prev.find(l => l.requestId === req.id) || ({
+        ...EMPTY_LINE,
+        requestId: req.id,
+        item_id: req.item_id ? String(req.item_id) : '',
+        itemSearch: req.item_id ? '' : req.description,
+        qty_ordered: req.qty_requested != null ? String(req.qty_requested) : '',
+      }))
+      const merged = [...reqLines, ...adhoc]
+      return merged.length ? merged : [{ ...EMPTY_LINE }]
+    })
     setFromRequests(reqs)
   }
+  const toggleAttachRequest = (req) => {
+    const has = fromRequests.some(r => r.id === req.id)
+    syncAttachedRequests(has ? fromRequests.filter(r => r.id !== req.id) : [...fromRequests, req])
+  }
+  const startFromRequests = (reqs) => { openCreate(); syncAttachedRequests(reqs) }
   const startFromRequest = (req) => startFromRequests([req])
+  const attachedVendorId = fromRequests[0]?.vendor_id ?? null
 
   // Arrived via "Create Order" on the Requests page — either a single ticket
   // or a multi-select batch (all one vendor).
@@ -264,7 +263,12 @@ export default function Orders() {
   const setLine = (i, k) => (e) => setLines(ls => ls.map((l, idx) => idx === i ? { ...l, [k]: e.target.value } : l))
   const updateLine = (i, patch) => setLines(ls => ls.map((l, idx) => idx === i ? { ...l, ...patch } : l))
   const addLine = () => setLines(ls => [...ls, { ...EMPTY_LINE }])
-  const removeLine = (i) => setLines(ls => ls.filter((_, idx) => idx !== i))
+  const removeLine = (i) => setLines(ls => {
+    const line = ls[i]
+    // Removing a request-derived line also unticks that request above.
+    if (line?.requestId) setFromRequests(fr => fr.filter(r => r.id !== line.requestId))
+    return ls.filter((_, idx) => idx !== i)
+  })
 
   // ── Vendor: search-and-create, same idea as the item picker below ──
   const [vendorSearch, setVendorSearch] = useState('')
@@ -419,7 +423,6 @@ export default function Orders() {
       }
       if (fromRequests.length) {
         setFromRequests([])
-        setSelectedReady(new Set())
         loadReady()
         // The whole point of "send to Pending" — land where the order that
         // was just created actually shows up, instead of staying on the
@@ -521,15 +524,10 @@ export default function Orders() {
       <PageHeader title={t('orders.title')} subtitle={t('orders.subtitle')}
         actions={
           <div className="flex gap-2">
-            {tab === 'ready' && selectedReady.size > 0 && (
-              <Button onClick={createOrderForSelected}>
-                {t('orders.createOrderForSelectedVendor', { count: selectedReady.size, vendor: activeVendorName })}
-              </Button>
-            )}
             {tab === 'ready' && readyRequests.length > 0 && (
               <Button variant="secondary" onClick={downloadReadyToOrderCsv}>{t('reports.exportCsv')}</Button>
             )}
-            {canRegister && tab !== 'discrepancies' && <Button variant={tab === 'ready' && selectedReady.size > 0 ? 'secondary' : 'primary'} onClick={openCreate}>{t('orders.newOrder')}</Button>}
+            {canRegister && tab !== 'discrepancies' && <Button onClick={openCreate}>{t('orders.newOrder')}</Button>}
           </div>
         } />
 
@@ -562,32 +560,17 @@ export default function Orders() {
             </div>
           ) : (
             <div className="flex flex-col gap-4">
-              {activeVendorName && (
-                <p className="text-xs text-gray-500 px-1 -mb-1">
-                  {t('orders.selectionLockedToVendor', { vendor: activeVendorName })}{' '}
-                  <button type="button" onClick={clearReadySelection} className="font-semibold text-brand-600 hover:underline">
-                    {t('orders.clearSelection')}
-                  </button>
-                </p>
-              )}
               {readyByVendor.map(([vendorName, vendorReqs]) => {
-                const locked = activeVendorName && activeVendorName !== vendorName
                 return (
                   <VendorGroup key={vendorName} title={vendorName} count={vendorReqs.length}
                     reportsLabel={vendorReqs.length === 1 ? t('orders.requestSingular') : t('orders.requestPlural')}>
                     {vendorReqs.map((r) => (
-                      <div key={r.id} className={`rounded-xl border bg-white p-4 flex flex-col gap-2.5 transition-colors ${
-                        selectedReady.has(r.id) ? 'border-brand-400 ring-1 ring-brand-100' : 'border-gray-100'
-                      } ${locked ? 'opacity-50' : ''}`}>
+                      <div key={r.id} className="rounded-xl border border-gray-100 bg-white p-4 flex flex-col gap-2.5">
                         <div className="flex items-start justify-between gap-2">
                           <div className="min-w-0">
                             <p className="text-sm font-semibold text-gray-900">{r.requested_by_name ?? t('requests.unknownRequester')}</p>
                             <p className="text-xs text-gray-500">{formatDateTime(r.created_at)}</p>
                           </div>
-                          <input type="checkbox" checked={selectedReady.has(r.id)} disabled={locked}
-                            onChange={() => toggleReadySelect(r)}
-                            aria-label={t('orders.selectForOrder')}
-                            className="w-5 h-5 shrink-0 accent-brand-500 cursor-pointer disabled:cursor-not-allowed" />
                         </div>
 
                         <TranslatableText text={r.description} className="text-sm text-gray-900" />
@@ -614,7 +597,7 @@ export default function Orders() {
                             </div>
                           ) : (
                             <div className="flex flex-wrap gap-2 items-center">
-                              {selectedReady.size === 0 && <Button size="sm" onClick={() => startFromRequest(r)}>{t('requests.createOrder')}</Button>}
+                              <Button size="sm" onClick={() => startFromRequest(r)}>{t('requests.createOrder')}</Button>
                               <button type="button" onClick={() => startDeclineReady(r.id)}
                                 className="inline-flex items-center justify-center gap-2 font-semibold text-sm px-3 py-1.5 rounded-lg border border-red-200 text-red-600 bg-white hover:bg-red-50 transition-colors">
                                 {t('requests.decline')}
@@ -765,34 +748,53 @@ export default function Orders() {
       {/* ── Create order modal (specialist/admin) ───────────────────── */}
       <Modal isOpen={createOpen} onClose={() => { setCreateOpen(false); setFromRequests([]) }} title={t('orders.newOrderTitle')} size="lg">
         <div className="flex flex-col gap-4">
-          {fromRequests.length > 0 && (
-            <div className="rounded-xl border border-brand-200 bg-brand-50/60 p-3 flex flex-col gap-2">
-              <p className="text-sm font-semibold text-brand-800">
-                {fromRequests.length === 1
-                  ? t('requests.fulfillingBanner', { name: fromRequests[0].requested_by_name ?? t('requests.unknownRequester') })
-                  : t('requests.fulfillingBannerPlural', { count: fromRequests.length })}
-              </p>
-              {/* Read-only reference — what each request actually asked for, kept
-                  separate from the Notes field below so that stays free for
-                  whatever the Lead wants to write about this order itself. */}
-              <div className="flex flex-col gap-1.5">
-                {fromRequests.map((req) => (
-                  <div key={req.id} className="rounded-lg bg-white/70 px-2.5 py-2 flex flex-col gap-1">
-                    <p className="text-xs font-medium text-gray-900">{req.description}</p>
-                    <div className="flex flex-wrap gap-1.5">
-                      {req.qty_requested != null && <Tag>{t('requests.qtyLabel', { qty: req.qty_requested, unit: req.unit_of_measure || '' })}</Tag>}
-                      {req.vendor_hint && <Tag tone="blue">{t('requests.vendorHintLabel', { vendor: req.vendor_hint })}</Tag>}
-                      {req.project_number && <Tag tone="brand">{t('requests.projectLabel', { number: req.project_number, name: req.project_name })}</Tag>}
+          {(checklistByVendor.length > 0) && (
+            <div className="rounded-xl border border-gray-200 bg-gray-50/70 p-3 flex flex-col gap-2">
+              <div className="flex items-center justify-between gap-2">
+                <p className="text-sm font-semibold text-gray-800">{t('orders.requestsToFulfill')}</p>
+                {fromRequests.length > 0 && (
+                  <span className="text-xs font-semibold text-brand-700">{t('orders.nAttached', { count: fromRequests.length })}</span>
+                )}
+              </div>
+              <p className="text-xs text-gray-500 -mt-1">{t('orders.requestsToFulfillHint')}</p>
+              <div className="flex flex-col gap-3 max-h-72 overflow-y-auto pr-1">
+                {checklistByVendor.map(([vendorName, vendorReqs]) => {
+                  const groupVendorId = vendorReqs[0]?.vendor_id ?? null
+                  const groupLocked = attachedVendorId != null && groupVendorId !== attachedVendorId
+                  return (
+                    <div key={vendorName} className="flex flex-col gap-1.5">
+                      <p className={`text-xs font-semibold ${groupLocked ? 'text-gray-300' : 'text-gray-500'}`}>{vendorName}</p>
+                      {vendorReqs.map((r) => {
+                        const checked = fromRequests.some(fr => fr.id === r.id)
+                        const disabled = groupLocked && !checked
+                        return (
+                          <label key={r.id} className={`flex items-start gap-2.5 rounded-lg border px-3 py-2 bg-white transition-colors ${
+                            checked ? 'border-brand-400 ring-1 ring-brand-100' : 'border-gray-100'
+                          } ${disabled ? 'opacity-40' : 'cursor-pointer'}`}>
+                            <input type="checkbox" checked={checked} disabled={disabled}
+                              onChange={() => toggleAttachRequest(r)}
+                              aria-label={t('orders.selectForOrder')}
+                              className="mt-0.5 w-4 h-4 shrink-0 accent-brand-500" />
+                            <div className="min-w-0 flex flex-col gap-1">
+                              <p className="text-sm text-gray-900">{r.description}</p>
+                              <div className="flex flex-wrap gap-1.5">
+                                {r.item_sku && <Tag>{r.item_sku} — {r.item_name}</Tag>}
+                                {r.qty_requested != null && <Tag>{t('requests.qtyLabel', { qty: r.qty_requested, unit: r.unit_of_measure || '' })}</Tag>}
+                                {r.requested_by_name && <Tag tone="blue">{r.requested_by_name}</Tag>}
+                              </div>
+                              {r.product_link && (
+                                <a href={r.product_link} target="_blank" rel="noopener noreferrer" onClick={(e) => e.stopPropagation()}
+                                  className="text-xs font-semibold text-brand-600 hover:underline w-fit">
+                                  {t('requests.viewProductLink')}
+                                </a>
+                              )}
+                            </div>
+                          </label>
+                        )
+                      })}
                     </div>
-                    {req.project_note && <p className="text-xs text-gray-600">{t('requests.projectNoteLabel', { note: req.project_note })}</p>}
-                    {req.notes && <p className="text-xs text-gray-600 italic">{req.notes}</p>}
-                    {req.product_link && (
-                      <a href={req.product_link} target="_blank" rel="noopener noreferrer" className="text-xs font-semibold text-brand-600 hover:underline w-fit">
-                        {t('requests.viewProductLink')}
-                      </a>
-                    )}
-                  </div>
-                ))}
+                  )
+                })}
               </div>
             </div>
           )}
