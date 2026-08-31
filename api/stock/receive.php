@@ -24,6 +24,18 @@ if ($qty <= 0) { http_response_code(422); exit(json_encode(['error' => 'Quantity
 
 $pdo = getPDO();
 
+// Can't receive against an order whose items haven't been set up yet.
+if ($orderId) {
+    $ord = $pdo->prepare('SELECT status FROM orders WHERE id = ?');
+    $ord->execute([$orderId]);
+    $ordStatus = $ord->fetchColumn();
+    if ($ordStatus === false) { http_response_code(422); exit(json_encode(['error' => 'Unknown order'])); }
+    if ($ordStatus === 'awaiting_item_setup') {
+        http_response_code(422);
+        exit(json_encode(['error' => 'Finish item setup for this order before receiving against it']));
+    }
+}
+
 // Physical receiving only happens at the Woodruff Rd. warehouse (the actual
 // receiving dock) — stock reaches the other location via Take/Drop-off, not
 // a second receiving point. Enforced here too, not just hidden in the UI.

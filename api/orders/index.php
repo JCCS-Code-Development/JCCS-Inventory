@@ -29,6 +29,7 @@ if ($method === 'GET') {
         "SELECT o.*, v.name AS vendor_name, r.name AS placed_by_name,
                 pu.name AS purchased_by_name, dl.name AS destination_location_name,
                 COUNT(oi.id) AS line_count,
+                COALESCE(SUM(oi.item_confirmed_at IS NOT NULL), 0) AS lines_confirmed,
                 COALESCE(SUM(oi.qty_ordered), 0) AS qty_ordered_total,
                 COALESCE(SUM(oi.qty_received), 0) AS qty_received_total,
                 EXISTS(

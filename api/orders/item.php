@@ -37,8 +37,15 @@ if ($method === 'GET') {
     $order['attachment_url'] = !empty($order['attachment_path']) ? APP_URL . '/uploads/' . $order['attachment_path'] : null;
 
     $lines = $pdo->prepare(
-        "SELECT oi.*, i.sku, i.name AS item_name, i.unit_of_measure
-         FROM order_items oi JOIN items i ON i.id = oi.item_id
+        "SELECT oi.*, i.sku, i.name AS item_name, i.unit_of_measure,
+                i.category_id, i.material_id, i.vendor_item_number, i.dimensions, i.reorder_point,
+                c.name AS category_name, m.name AS material_name,
+                cf.name AS item_confirmed_by_name
+         FROM order_items oi
+         JOIN items i ON i.id = oi.item_id
+         LEFT JOIN categories c ON c.id = i.category_id
+         LEFT JOIN materials m  ON m.id = i.material_id
+         LEFT JOIN inventory_user_roles cf ON cf.fieldclock_user_id = oi.item_confirmed_by
          WHERE oi.order_id = ? ORDER BY i.name"
     );
     $lines->execute([$id]);
@@ -52,7 +59,7 @@ if ($method === 'GET') {
         'order_number', 'vendor_id', 'expected_date', 'notes', 'status',
         'order_type', 'invoice_number', 'receipt_number', 'purchased_by_user_id', 'destination_location_id',
     ];
-    if (isset($body['status']) && !in_array($body['status'], ['placed', 'partially_received', 'received', 'cancelled'], true)) {
+    if (isset($body['status']) && !in_array($body['status'], ['awaiting_item_setup', 'placed', 'partially_received', 'received', 'cancelled'], true)) {
         http_response_code(422); exit(json_encode(['error' => 'Invalid status']));
     }
     if (isset($body['order_type']) && !in_array($body['order_type'], ['online', 'dropoff'], true)) {

@@ -211,14 +211,16 @@
     "couldNotAddBarcode": "No se pudo agregar ese código de barras.",
     "couldNotRemoveBarcode": "No se pudo eliminar ese código de barras.",
     "deactivateConfirm": "¿Desactivar {{name}}?",
-    "couldNotDeactivate": "No se pudo desactivar."
+    "couldNotDeactivate": "No se pudo desactivar.",
+    "saved": "Artículo guardado."
   },
   "orders": {
     "status": {
       "placed": "Realizado",
       "partiallyReceived": "Parcialmente Recibido",
       "received": "Recibido",
-      "cancelled": "Cancelado"
+      "cancelled": "Cancelado",
+      "awaitingItemSetup": "Falta preparar artículos"
     },
     "type": {
       "online": "Pedido en Línea",
@@ -346,7 +348,20 @@
     "closeOrderConfirm": "Esto lo marca como terminado aunque nunca haya llegado la cantidad completa pedida. Hazlo solo si estás seguro de que no llegará nada más — por ejemplo, si el proveedor emitió una nota de crédito en lugar de enviar el resto.",
     "closeOrderHint": "¿No va a llegar nada más de este pedido? Puedes cerrarlo sin esperar el resto.",
     "orderClosed": "Pedido cerrado.",
-    "closedShortBadge": "Cerrado incompleto"
+    "closedShortBadge": "Cerrado incompleto",
+    "tabItemSetup": "Preparar Artículos",
+    "itemSetupHint": "Revisa el artículo de catálogo de cada renglón — nombre, SKU y categoría correctos, sin duplicados — y luego el pedido queda disponible para Recepción.",
+    "nothingInSetup": "No hay pedidos esperando preparación de artículos.",
+    "linesConfirmed": "{{done}} / {{total}} artículos listos",
+    "confirmItem": "Confirmar artículo",
+    "itemNeedsCategory": "Falta categoría",
+    "possibleDuplicate": "Puede que ya esté en inventario:",
+    "useThisInstead": "usar este",
+    "undoConfirm": "Deshacer",
+    "orderReadyToReceive": "{{order}} está listo para recibir.",
+    "confirmedBy": "por {{name}} · {{date}}",
+    "saveBeforeConfirm": "Guarda tus cambios primero",
+    "linePointedAt": "El renglón ahora apunta a {{name}}"
   },
   "requests": {
     "title": "Solicitudes",
@@ -507,7 +522,8 @@
     "boughtBy": "Comprado por {{name}}",
     "receiptNumber": "Recibo #{{number}}",
     "cantFindOrder": "¿No encuentras el pedido?",
-    "freeformLastResort": "Regístralo manualmente — último recurso"
+    "freeformLastResort": "Regístralo manualmente — último recurso",
+    "someOrdersInSetup": "{{count}} pedido(s) aún necesitan preparación de artículos en la página de Pedidos."
   },
   "vendors": {
     "title": "Proveedores",

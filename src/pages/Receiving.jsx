@@ -35,6 +35,7 @@ export default function Receiving() {
   const isAdmin = useAuthStore((s) => s.user?.role === 'admin')
   const TYPE_LABELS = { online: t('orders.type.online'), dropoff: t('orders.type.dropoff') }
   const STATUS_LABELS = {
+    awaiting_item_setup: t('orders.status.awaitingItemSetup'),
     placed: t('orders.status.placed'), partially_received: t('orders.status.partiallyReceived'),
     received: t('orders.status.received'), cancelled: t('orders.status.cancelled'),
   }
@@ -43,6 +44,7 @@ export default function Receiving() {
   const [locations, setLocations] = useState([])
   const [vendors, setVendors]     = useState([])
   const [openOrders, setOpenOrders] = useState([])
+  const [setupCount, setSetupCount] = useState(0)
   const [orderVendorFilter, setOrderVendorFilter] = useState('') // narrow down ahead of the truck arriving
   const [orderSearch, setOrderSearch] = useState('') // look up by order # once the paper invoice is in hand
   const [orderId, setOrderId]     = useState('')
@@ -77,7 +79,11 @@ export default function Receiving() {
   const [checklistError, setChecklistError]   = useState('')
   const [checklistSuccess, setChecklistSuccess] = useState('')
 
-  const loadOpenOrders = () => listOrders().then(d => setOpenOrders((d.orders ?? []).filter(ord => OPEN_STATUSES.includes(ord.status))))
+  const loadOpenOrders = () => listOrders().then(d => {
+    const all = d.orders ?? []
+    setOpenOrders(all.filter(ord => OPEN_STATUSES.includes(ord.status)))
+    setSetupCount(all.filter(ord => ord.status === 'awaiting_item_setup').length)
+  })
 
   useEffect(() => {
     Promise.all([listItems({ active: 1 }), listLocations({ active: 1 }), listVendors({ active: 1 }), listOrders()])
@@ -85,6 +91,7 @@ export default function Receiving() {
         const locs = l.locations ?? []
         setItems(i.items ?? []); setLocations(locs); setVendors(v.vendors ?? [])
         setOpenOrders((o.orders ?? []).filter(ord => OPEN_STATUSES.includes(ord.status)))
+        setSetupCount((o.orders ?? []).filter(ord => ord.status === 'awaiting_item_setup').length)
         // Receiving only ever happens at the Woodruff Rd. warehouse (the
         // physical receiving dock) — auto-fill it instead of asking.
         const receivingLoc = locs.find(l2 => l2.name.toLowerCase().includes('woodruff'))
@@ -544,6 +551,9 @@ export default function Receiving() {
                 <p className="text-xs text-gray-400 text-center py-3">
                   {openOrders.length === 0 ? t('receiving.noOpenOrders') : t('receiving.noOrdersMatch')}
                 </p>
+              )}
+              {setupCount > 0 && (
+                <p className="text-xs text-amber-600 text-center py-1">{t('receiving.someOrdersInSetup', { count: setupCount })}</p>
               )}
 
               {filteredOpenOrders.map((o) => {

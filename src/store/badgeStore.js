@@ -36,7 +36,7 @@ export const useBadgeStore = create((set) => ({
         // Plain 'placed' (nothing's arrived at all) is just normal
         // waiting, not something to flag.
         ordersAttentionCount: (orderData.orders ?? [])
-          .filter((o) => o.has_open_discrepancy || o.status === 'partially_received').length,
+          .filter((o) => o.has_open_discrepancy || o.status === 'partially_received' || o.status === 'awaiting_item_setup').length,
       })
     } catch {
       // Transient network blip — badges just stay at their last known value.

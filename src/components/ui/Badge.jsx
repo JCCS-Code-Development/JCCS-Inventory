@@ -12,6 +12,7 @@ const variants = {
   active:           'bg-brand-100 text-brand-800',
   inactive:         'bg-gray-100 text-gray-500',
   // Order statuses
+  awaiting_item_setup: 'bg-orange-100 text-orange-800',
   placed:             'bg-blue-100 text-blue-800',
   partially_received: 'bg-amber-100 text-amber-800',
   received:           'bg-green-100 text-green-800',

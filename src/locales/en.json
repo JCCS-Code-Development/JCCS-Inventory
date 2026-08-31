@@ -211,14 +211,16 @@
     "couldNotAddBarcode": "Could not add that barcode.",
     "couldNotRemoveBarcode": "Could not remove that barcode.",
     "deactivateConfirm": "Deactivate {{name}}?",
-    "couldNotDeactivate": "Could not deactivate."
+    "couldNotDeactivate": "Could not deactivate.",
+    "saved": "Item saved."
   },
   "orders": {
     "status": {
       "placed": "Placed",
       "partiallyReceived": "Partially Received",
       "received": "Received",
-      "cancelled": "Cancelled"
+      "cancelled": "Cancelled",
+      "awaitingItemSetup": "Needs item setup"
     },
     "type": {
       "online": "Online Order",
@@ -346,7 +348,20 @@
     "closeOrderConfirm": "This marks it as done even though it never reached the full ordered quantity. Only do this once you're sure nothing more is coming — for example, the vendor issued a credit instead of shipping the rest.",
     "closeOrderHint": "Nothing more coming on this one? You can close it out without waiting for the rest to arrive.",
     "orderClosed": "Order closed.",
-    "closedShortBadge": "Closed short"
+    "closedShortBadge": "Closed short",
+    "tabItemSetup": "Item Setup",
+    "itemSetupHint": "Vet each line's catalog item — proper name, SKU, and category, no duplicates — then the order opens up to Receiving.",
+    "nothingInSetup": "No orders waiting on item setup.",
+    "linesConfirmed": "{{done}} / {{total}} items set",
+    "confirmItem": "Confirm item",
+    "itemNeedsCategory": "Needs a category",
+    "possibleDuplicate": "Might already be in inventory:",
+    "useThisInstead": "use this",
+    "undoConfirm": "Undo",
+    "orderReadyToReceive": "{{order}} is ready to receive.",
+    "confirmedBy": "by {{name}} · {{date}}",
+    "saveBeforeConfirm": "Save your edits first",
+    "linePointedAt": "Line now points at {{name}}"
   },
   "requests": {
     "title": "Requests",
@@ -507,7 +522,8 @@
     "boughtBy": "Bought by {{name}}",
     "receiptNumber": "Receipt# {{number}}",
     "cantFindOrder": "Can't find the order?",
-    "freeformLastResort": "Log a freeform receipt instead — last resort"
+    "freeformLastResort": "Log a freeform receipt instead — last resort",
+    "someOrdersInSetup": "{{count}} order(s) still need item setup on the Orders page."
   },
   "vendors": {
     "title": "Vendors",

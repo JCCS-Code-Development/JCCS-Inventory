@@ -4,6 +4,17 @@ export const listOrders = (params = {}) => client.get('/orders/index.php', { par
 export const getOrder = (id) => client.get(`/orders/item.php?id=${id}`).then((r) => r.data)
 export const createOrder = (payload) => client.post('/orders/index.php', payload).then((r) => r.data)
 export const updateOrder = (id, payload) => client.put(`/orders/item.php?id=${id}`, payload).then((r) => r.data)
+
+// "Item Setup" stage — vet each order line's catalog item before the order
+// can be received. confirmOrderItem promotes the order to 'placed' once every
+// line is confirmed; setOrderLineItem repoints a line to a different existing
+// item (for when the review-time item turns out to be a duplicate).
+export const confirmOrderItem = (orderItemId) =>
+  client.post('/orders/confirm-item.php', { order_item_id: orderItemId }).then((r) => r.data)
+export const unconfirmOrderItem = (orderItemId) =>
+  client.post('/orders/confirm-item.php', { order_item_id: orderItemId, undo: true }).then((r) => r.data)
+export const setOrderLineItem = (orderItemId, itemId) =>
+  client.patch('/orders/line.php', { order_item_id: orderItemId, item_id: itemId }).then((r) => r.data)
 export const deleteOrder = (id) => client.delete(`/orders/item.php?id=${id}`).then((r) => r.data)
 // Marks a partially received order as done even though it never reached
 // full quantity — for when nothing more is actually coming (a vendor credit

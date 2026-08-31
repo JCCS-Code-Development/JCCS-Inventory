@@ -145,11 +145,19 @@ CREATE TABLE `item_stock` (
 -- Purchase orders. Admin creates/deletes; specialist views status/details and
 -- fulfills them via stock_transactions (type='receive', order_id set), which
 -- increments order_items.qty_received.
+--
+-- status lifecycle: a new order starts 'awaiting_item_setup' — an Inventory
+-- Lead works the Orders "Item Setup" tab, confirming each line's catalog item
+-- is properly named (name + SKU + category) and not a duplicate. Once every
+-- line's order_items.item_confirmed_at is set the order flips to 'placed',
+-- and only then does it show up in the Receiving tab (which lists
+-- placed/partially_received). receive.php walks it up to
+-- partially_received/received from there.
 CREATE TABLE `orders` (
   `id`                       INT UNSIGNED  NOT NULL AUTO_INCREMENT,
   `order_number`             VARCHAR(60)   NULL,
   `vendor_id`                INT UNSIGNED  NULL,
-  `status`                   ENUM('placed','partially_received','received','cancelled') NOT NULL DEFAULT 'placed',
+  `status`                   ENUM('awaiting_item_setup','placed','partially_received','received','cancelled') NOT NULL DEFAULT 'awaiting_item_setup',
   -- 'online' = placed with a vendor, arrives later (expected_date/invoice_number apply).
   -- 'dropoff' = already bought in person and being logged/stored now (purchased_by/
   -- receipt_number/destination_location_id apply). Same orders/order_items records
@@ -178,10 +186,17 @@ CREATE TABLE `order_items` (
   `qty_ordered`  DECIMAL(12,2) NOT NULL,
   `qty_received` DECIMAL(12,2) NOT NULL DEFAULT 0.00,
   `unit_cost`    DECIMAL(10,2) NULL,
+  -- Set on the Orders "Item Setup" tab once a Lead has vetted this line's
+  -- catalog item (proper name/SKU/category, not a duplicate). NULL = still
+  -- needs setup; the order can't move to 'placed' / be received until every
+  -- line is confirmed. See api/orders/confirm-item.php.
+  `item_confirmed_at` TIMESTAMP    NULL DEFAULT NULL,
+  `item_confirmed_by` INT UNSIGNED NULL,
   PRIMARY KEY (`id`),
   KEY `idx_order_items_order` (`order_id`),
   CONSTRAINT `fk_oi_order` FOREIGN KEY (`order_id`) REFERENCES `orders` (`id`) ON DELETE CASCADE,
-  CONSTRAINT `fk_oi_item`  FOREIGN KEY (`item_id`)  REFERENCES `items` (`id`)  ON DELETE CASCADE
+  CONSTRAINT `fk_oi_item`  FOREIGN KEY (`item_id`)  REFERENCES `items` (`id`)  ON DELETE CASCADE,
+  CONSTRAINT `fk_oi_confirmed_by` FOREIGN KEY (`item_confirmed_by`) REFERENCES `inventory_user_roles` (`fieldclock_user_id`) ON DELETE SET NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 -- Filed when the in-person delivery check (the Receiving checklist) turns up

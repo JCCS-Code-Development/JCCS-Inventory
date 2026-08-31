@@ -19,7 +19,9 @@ import { listDiscrepancies, resolveDiscrepancy, reopenDiscrepancy } from '../api
 import { listRequests, resolveRequest, downloadReadyToOrderCsv } from '../api/requests'
 import { listVendors, createVendor } from '../api/vendors'
 import { listItems, createItem } from '../api/items'
+import { listCategories } from '../api/categories'
 import { listLocations } from '../api/locations'
+import OrderItemSetupCard from '../components/orders/OrderItemSetupCard'
 import { listUsers } from '../api/users'
 import { useAuthStore } from '../store/authStore'
 import { useBadgeStore } from '../store/badgeStore'
@@ -72,6 +74,7 @@ export default function Orders() {
   const [fromRequests, setFromRequests] = useState([])
 
   const STATUS_LABELS = {
+    awaiting_item_setup: t('orders.status.awaitingItemSetup'),
     placed: t('orders.status.placed'), partially_received: t('orders.status.partiallyReceived'),
     received: t('orders.status.received'), cancelled: t('orders.status.cancelled'),
   }
@@ -80,11 +83,12 @@ export default function Orders() {
   const [orders, setOrders]       = useState([])
   const [vendors, setVendors]     = useState([])
   const [items, setItems]         = useState([])
+  const [categories, setCategories] = useState([])
   const [locations, setLocations] = useState([])
   const [users, setUsers]         = useState([])
   const [loading, setLoading]     = useState(true)
 
-  const [tab, setTab] = useState('pending') // 'ready' | 'pending' | 'flagged' | 'closed' | 'all' | 'discrepancies'
+  const [tab, setTab] = useState('pending') // 'ready' | 'itemsetup' | 'pending' | 'flagged' | 'closed' | 'all' | 'discrepancies'
 
   // ── Ready to Order (reviewed request tickets, still open) ──────────
   // The worklist the two Inventory Leads actually sit down with on
@@ -172,6 +176,7 @@ export default function Orders() {
     loadReady() // fetched up front (not gated on tab) so the tab button can show a live count
     listVendors({ active: 1 }).then(d => setVendors(d.vendors ?? []))
     listItems({ active: 1 }).then(d => setItems(d.items ?? []))
+    listCategories().then(d => setCategories(d.categories ?? [])).catch(() => setCategories([]))
     listLocations({ active: 1 }).then(d => setLocations(d.locations ?? []))
     listUsers().then(d => setUsers(d.users ?? [])).catch(() => setUsers([])) // 403 for basic users; harmless here since they can't open the modal anyway
   }, [])
@@ -507,6 +512,7 @@ export default function Orders() {
   //               or it arrived in full otherwise. Either way it's not just
   //               "waiting to arrive" anymore, so it doesn't belong in Pending.
   //  - Closed   = arrived in full, nothing outstanding against it.
+  const setupOrders = orders.filter(o => o.status === 'awaiting_item_setup')
   const isPending = (o) => (o.status === 'placed' || o.status === 'partially_received') && !o.has_open_discrepancy
   const isFlagged = (o) => o.has_open_discrepancy
   const isClosed  = (o) => o.status === 'received' && !o.has_open_discrepancy
@@ -532,21 +538,24 @@ export default function Orders() {
         } />
 
       <div className="flex gap-2 mb-4 flex-wrap">
-        {[['ready', t('orders.tabReady')], ['pending', t('orders.tabPending')], ['flagged', t('orders.tabFlagged')], ['closed', t('orders.tabClosed')], ['all', t('orders.tabAll')], ['discrepancies', t('orders.tabDiscrepancies')]].map(([val, label]) => (
+        {[['ready', t('orders.tabReady')], ['itemsetup', t('orders.tabItemSetup')], ['pending', t('orders.tabPending')], ['flagged', t('orders.tabFlagged')], ['closed', t('orders.tabClosed')], ['all', t('orders.tabAll')], ['discrepancies', t('orders.tabDiscrepancies')]].map(([val, label]) => {
+          const count = val === 'ready' ? readyRequests.length : val === 'itemsetup' ? setupOrders.length : 0
+          return (
           <button key={val} type="button" onClick={() => setTab(val)}
             className={`px-4 py-2 rounded-xl text-sm font-semibold transition-colors flex items-center gap-1.5 ${
               tab === val ? 'bg-brand-500 text-white' : 'bg-white border border-gray-200 text-gray-600 hover:border-gray-300'
             }`}>
             {label}
-            {val === 'ready' && readyRequests.length > 0 && (
+            {count > 0 && (
               <span className={`inline-flex items-center justify-center min-w-[1.25rem] h-5 px-1 rounded-full text-xs font-bold ${
-                tab === 'ready' ? 'bg-white/25 text-white' : 'bg-brand-500 text-white'
+                tab === val ? 'bg-white/25 text-white' : 'bg-brand-500 text-white'
               }`}>
-                {readyRequests.length}
+                {count}
               </span>
             )}
           </button>
-        ))}
+          )
+        })}
       </div>
 
       {tab === 'ready' ? (
@@ -610,6 +619,23 @@ export default function Orders() {
                   </VendorGroup>
                 )
               })}
+            </div>
+          )}
+        </>
+      ) : tab === 'itemsetup' ? (
+        <>
+          <p className="text-xs text-gray-500 px-1 pb-3">{t('orders.itemSetupHint')}</p>
+          {setupOrders.length === 0 ? (
+            <div className="bg-white rounded-2xl border border-gray-100 overflow-hidden">
+              <p className="text-center text-gray-400 py-16 text-sm">{t('orders.nothingInSetup')}</p>
+            </div>
+          ) : (
+            <div className="flex flex-col gap-4">
+              {setupOrders.map(o => (
+                <OrderItemSetupCard key={o.id} order={o} categories={categories} allItems={items}
+                  onCategoryCreated={(c) => setCategories(cs => cs.some(x => x.id === c.id) ? cs : [...cs, c])}
+                  onOrderChanged={() => { load(); refreshBadges(true) }} />
+              ))}
             </div>
           )}
         </>
