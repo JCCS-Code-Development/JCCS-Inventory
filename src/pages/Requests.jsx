@@ -303,8 +303,6 @@ export default function Requests() {
     } finally { setSaving(false) }
   }
 
-  const handleCreateOrder = (r) => navigate('/orders', { state: { fromRequest: r } })
-
   const startDecline  = (id) => { setDecliningId(id); setDeclineReason('') }
   const cancelDecline = () => { setDecliningId(null); setDeclineReason('') }
   const confirmDecline = async (id) => {
@@ -470,7 +468,6 @@ export default function Requests() {
             </div>
           ) : (
             <div className="flex flex-wrap gap-2">
-              <Button size="sm" onClick={() => handleCreateOrder(r)}>{t('requests.createOrder')}</Button>
               {orders.length > 0 && <Button size="sm" variant="secondary" onClick={() => startLink(r.id)}>{t('requests.linkExistingOrder')}</Button>}
               <button type="button" onClick={() => startDecline(r.id)}
                 className="inline-flex items-center justify-center gap-2 font-semibold text-sm px-3 py-1.5 rounded-lg border border-red-200 text-red-600 bg-white hover:bg-red-50 transition-colors">
