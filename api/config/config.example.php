@@ -22,3 +22,8 @@ define('FRONTEND_ORIGIN', 'https://inventory.jccs-services.com');
 // The API's own public base URL — used to build absolute URLs for uploaded
 // item photos (api/uploads/items/...). No trailing slash.
 define('APP_URL', 'https://inventory.jccs-services.com/api');
+
+// Read-only token for the JCCS Operations Board's project lookup
+// (api/projects/board-lookup.php). Use the SAME value as OPS_BOARD_TOKEN in
+// FieldClock's and the Calendar app's config.php. Leave CHANGE_ME to disable.
+define('OPS_BOARD_TOKEN', 'CHANGE_ME');
