@@ -32,6 +32,7 @@ const EMPTY = {
   vendor_id: '', vendor_item_number: '', dimensions: '', unit_cost: '', reorder_point: '0',
   lead_time_days: '', default_project_id: '', notes: '',
   initial_qty: '', initial_location_id: '',
+  is_trackable_asset: false, expiration_date: '',
 }
 const EMPTY_ADD_STOCK = { qty: '', location_id: '' }
 // Lazy: the ~470KB barcode decoder only downloads once someone taps Scan.
@@ -260,6 +261,7 @@ export default function Items() {
       lead_time_days: it.lead_time_days != null ? String(it.lead_time_days) : '',
       default_project_id: String(it.default_project_id ?? ''), notes: it.notes ?? '',
       initial_qty: '', initial_location_id: '',
+      is_trackable_asset: !!it.is_trackable_asset, expiration_date: it.expiration_date ?? '',
     })
     setError(''); setNameSuggestions([]); setAddStockTo(null)
     setShowNewCategory(false); setShowNewMaterial(false); setShowMoreDetails(true) // editing: show everything, nothing to hide
@@ -834,6 +836,17 @@ export default function Items() {
                 </div>
                 <Input label={t('items.leadTimeDays')} type="number" value={form.lead_time_days} onChange={set('lead_time_days')}
                   helperText={t('items.leadTimeHelper')} />
+
+                <div className="grid grid-cols-2 gap-3 items-end">
+                  <label className="flex items-center gap-2 text-sm font-medium text-gray-700 rounded-xl border border-gray-300 px-4 py-3 cursor-pointer">
+                    <input type="checkbox" checked={form.is_trackable_asset}
+                      onChange={(e) => setForm(f => ({ ...f, is_trackable_asset: e.target.checked }))}
+                      className="w-4 h-4 accent-brand-500" />
+                    {t('items.trackableAsset')}
+                  </label>
+                  <Input label={t('items.expirationDate')} type="date" value={form.expiration_date} onChange={set('expiration_date')} />
+                </div>
+                {form.is_trackable_asset && <p className="text-xs text-gray-500 -mt-2">{t('items.trackableAssetHelper')}</p>}
 
                 {modal === 'create' ? (
                   <Input label={t('items.barcode')} value={form.barcode} onChange={set('barcode')} placeholder={t('items.barcodePlaceholder')} />

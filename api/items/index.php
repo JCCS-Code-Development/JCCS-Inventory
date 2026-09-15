@@ -75,8 +75,8 @@ if ($method === 'GET') {
     $pdo->beginTransaction();
     try {
         $pdo->prepare(
-            'INSERT INTO items (sku, name, category_id, material_id, unit_of_measure, vendor_id, vendor_item_number, dimensions, unit_cost, reorder_point, lead_time_days, default_project_id, notes)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
+            'INSERT INTO items (sku, name, category_id, material_id, unit_of_measure, vendor_id, vendor_item_number, dimensions, unit_cost, reorder_point, lead_time_days, default_project_id, notes, is_trackable_asset, expiration_date)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
         )->execute([
             $sku,
             sanitizeString($body['name']),
@@ -91,6 +91,8 @@ if ($method === 'GET') {
             !empty($body['lead_time_days']) ? (int)$body['lead_time_days'] : null,
             !empty($body['default_project_id']) ? (int)$body['default_project_id'] : null,
             !empty($body['notes']) ? sanitizeString($body['notes']) : null,
+            !empty($body['is_trackable_asset']) ? 1 : 0,
+            !empty($body['expiration_date']) ? $body['expiration_date'] : null,
         ]);
         $itemId = (int)$pdo->lastInsertId();
 

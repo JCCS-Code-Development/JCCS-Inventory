@@ -18,6 +18,8 @@ import Locations from './pages/Locations'
 import Projects from './pages/Projects'
 import Users from './pages/Users'
 import Reports from './pages/Reports'
+import Tasks from './pages/Tasks'
+import Tools from './pages/Tools'
 
 function RoleRedirect() {
   const isAuthenticated = useAuthStore((s) => s.isAuthenticated)
@@ -35,14 +37,16 @@ export default function App() {
           <Route path="/" element={<Dashboard />} />
           <Route path="/take-dropoff" element={<TakeDropoff />} />
           <Route path="/items" element={<Items />} />
+          <Route path="/tools" element={<Tools />} />
 
-          {/* Specialist + admin: requests, receiving, order tracking, reports */}
+          {/* Specialist + admin: requests, receiving, order tracking, reports, tasks */}
           <Route element={<RoleRoute allowedRoles={['specialist', 'admin']} />}>
             <Route path="/requests" element={<Requests />} />
             <Route path="/receiving" element={<Receiving />} />
             <Route path="/counts" element={<Counts />} />
             <Route path="/orders" element={<Orders />} />
             <Route path="/reports" element={<Reports />} />
+            <Route path="/tasks" element={<Tasks />} />
           </Route>
 
           {/* Admin only: total control */}

@@ -5,11 +5,15 @@ import PageHeader from '../components/admin/PageHeader'
 import StatsCard from '../components/admin/StatsCard'
 import Card from '../components/ui/Card'
 import Badge from '../components/ui/Badge'
+import Tag from '../components/ui/Tag'
 import Spinner from '../components/ui/Spinner'
+import TaskDetailModal from '../components/tasks/TaskDetailModal'
 import { listItems } from '../api/items'
 import { listLocations } from '../api/locations'
 import { getLowStockReport } from '../api/reports'
 import { listOrders } from '../api/orders'
+import { listTasks } from '../api/tasks'
+import { listTools } from '../api/tools'
 import { useAuthStore } from '../store/authStore'
 import { formatDate, formatQty } from '../utils/format'
 
@@ -22,10 +26,11 @@ const SearchGlyph   = () => <svg className="w-5 h-5" fill="none" viewBox="0 0 24
 const TakeGlyph     = () => <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M12 4v12m0 0l-4-4m4 4l4-4M4 20h16"/></svg>
 
 const OPEN_STATUSES = ['placed', 'partially_received']
+const STATUS_BADGE = {
+  to_do: 'active', in_progress: 'checkout', waiting_approval: 'partially_received',
+  waiting_delivery: 'partially_received', blocked: 'low_stock', completed: 'in_stock', canceled: 'cancelled',
+}
 
-// Soft pastel tones per action — background stays pale so it doesn't fight
-// with the brand-orange chrome elsewhere on the page; hover/active just
-// deepen the same hue slightly rather than introducing a new color.
 const QUICK_ACTION_TONES = {
   green:  'bg-green-50  border-green-100  text-green-800  hover:bg-green-100  hover:border-green-200',
   yellow: 'bg-amber-50  border-amber-100  text-amber-800  hover:bg-amber-100  hover:border-amber-200',
@@ -41,33 +46,118 @@ function QuickAction({ icon, label, to, state, tone }) {
   )
 }
 
+// One compact, clickable row — used by every task section below. Keeps the
+// list scannable (title + the couple of tags that matter) rather than
+// repeating the full detail every row; the modal has the rest.
+function TaskRow({ task, onOpen }) {
+  const { t } = useTranslation()
+  return (
+    <button type="button" onClick={() => onOpen(task.id)}
+      className="w-full flex items-start justify-between gap-3 py-2.5 text-left hover:bg-gray-50 rounded-lg px-2 -mx-2 transition-colors">
+      <div className="min-w-0">
+        <p className="text-sm font-medium text-gray-900 truncate">{task.title}</p>
+        <div className="flex flex-wrap gap-1.5 mt-1">
+          {task.priority === 'high' && <Tag tone="blue">{t('tasks.priorityHigh')}</Tag>}
+          {task.location_name && <Tag>{task.location_name}</Tag>}
+          {task.item_sku && <Tag>{task.item_sku}</Tag>}
+          {task.checklist_total > 0 && <Tag>{task.checklist_done}/{task.checklist_total}</Tag>}
+        </div>
+      </div>
+      <div className="text-right shrink-0">
+        <Badge variant={STATUS_BADGE[task.status]}>{t(`tasks.status.${task.status}`)}</Badge>
+        {task.due_at && <p className="text-xs text-gray-400 mt-1">{formatDate(task.due_at)}</p>}
+      </div>
+    </button>
+  )
+}
+
+function TaskSection({ title, tasks, onOpen, emptyText, defaultOpen = true, accent }) {
+  if (tasks.length === 0 && !emptyText) return null
+  return (
+    <details open={defaultOpen} className="group bg-white rounded-2xl border border-gray-100 overflow-hidden">
+      <summary className={`cursor-pointer select-none list-none [&::-webkit-details-marker]:hidden px-4 py-3 flex items-center justify-between text-sm font-semibold ${accent ?? 'bg-gray-50 text-gray-700'}`}>
+        <span className="flex items-center gap-2">
+          <span className="text-gray-400 inline-block transition-transform group-open:rotate-90">▸</span>
+          {title}
+        </span>
+        {tasks.length > 0 && (
+          <span className="inline-flex items-center justify-center min-w-[1.25rem] h-5 px-1.5 rounded-full text-xs font-bold bg-white/70 text-gray-600">
+            {tasks.length}
+          </span>
+        )}
+      </summary>
+      <div className="border-t border-gray-100 px-2 py-1 divide-y divide-gray-50">
+        {tasks.length === 0 ? (
+          <p className="text-sm text-gray-400 py-6 text-center">{emptyText}</p>
+        ) : (
+          tasks.map((task) => <TaskRow key={task.id} task={task} onOpen={onOpen} />)
+        )}
+      </div>
+    </details>
+  )
+}
+
 export default function Dashboard() {
   const { t } = useTranslation()
   const role = useAuthStore((s) => s.user?.role)
   const canManage = role === 'admin' || role === 'specialist'
   const STATUS_LABELS = { placed: t('orders.status.placed'), partially_received: t('orders.status.partiallyReceived') }
 
-  const [loading, setLoading]         = useState(true)
-  const [itemCount, setItemCount]     = useState(0)
+  const [loading, setLoading]             = useState(true)
+  const [itemCount, setItemCount]         = useState(0)
   const [locationCount, setLocationCount] = useState(0)
-  const [lowStock, setLowStock]       = useState([])
-  const [openOrders, setOpenOrders]   = useState([])
+  const [lowStock, setLowStock]           = useState([])
+  const [openOrders, setOpenOrders]       = useState([])
+  const [tasks, setTasks]                 = useState([])
+  const [tools, setTools]                 = useState([])
+  const [openTaskId, setOpenTaskId]       = useState(null)
 
-  useEffect(() => {
+  const load = () => {
     Promise.all([
       listItems({ active: 1 }),
       listLocations({ active: 1 }),
       getLowStockReport(),
       canManage ? listOrders() : Promise.resolve({ orders: [] }),
-    ]).then(([items, locations, low, orders]) => {
+      listTasks(),
+      listTools(),
+    ]).then(([items, locations, low, orders, taskData, toolData]) => {
       setItemCount(items.items?.length ?? 0)
       setLocationCount(locations.locations?.length ?? 0)
       setLowStock(low.items ?? [])
       setOpenOrders((orders.orders ?? []).filter(o => OPEN_STATUSES.includes(o.status)))
+      setTasks(taskData.tasks ?? [])
+      setTools(toolData.tools ?? [])
     }).finally(() => setLoading(false))
-  }, [canManage])
+  }
+  useEffect(() => { load() }, [canManage]) // eslint-disable-line react-hooks/exhaustive-deps
 
   if (loading) return <div className="flex justify-center py-16"><Spinner size="lg" /></div>
+
+  // ── Bucket every task into exactly one dashboard section ────────────────
+  // Order matters: a status bucket always wins over a date bucket, so a
+  // waiting/blocked task never also shows up as merely "overdue."
+  const todayStr = new Date().toISOString().slice(0, 10)
+  const recentCutoff = Date.now() - 7 * 86400000
+
+  const buckets = { overdue: [], today: [], next7: [], waitingApproval: [], waitingDelivery: [], improvement: [], completed: [] }
+  for (const task of tasks) {
+    if (task.status === 'canceled') continue
+    if (task.status === 'completed') {
+      if (task.completed_at && new Date(task.completed_at).getTime() >= recentCutoff) buckets.completed.push(task)
+      continue
+    }
+    if (task.status === 'waiting_approval') { buckets.waitingApproval.push(task); continue }
+    if (task.status === 'waiting_delivery') { buckets.waitingDelivery.push(task); continue }
+    if (task.source === 'improvement' && !task.assigned_to) { buckets.improvement.push(task); continue }
+
+    const dueDate = task.due_at ? task.due_at.slice(0, 10) : null
+    if (dueDate && dueDate < todayStr) buckets.overdue.push(task)
+    else if (!dueDate || dueDate === todayStr) buckets.today.push(task)
+    else buckets.next7.push(task) // due later — including >7 days out, folded in here rather than a separate bucket
+  }
+  buckets.completed.sort((a, b) => new Date(b.completed_at) - new Date(a.completed_at))
+
+  const missingTools = tools.filter(tl => tl.is_overdue)
 
   return (
     <div className="w-full">
@@ -87,6 +177,42 @@ export default function Dashboard() {
         <StatsCard label={t('dashboard.lowStock')} value={lowStock.length} icon={<AlertGlyph />} color="amber" />
         <StatsCard label={t('dashboard.locations')} value={locationCount} icon={<LocationsGlyph />} color="brand" />
         {canManage && <StatsCard label={t('dashboard.ordersAwaiting')} value={openOrders.length} icon={<OrdersGlyph />} color="brand" />}
+      </div>
+
+      {/* ── The daily work queue — most urgent first ──────────────────── */}
+      <div className="flex flex-col gap-3 mb-6">
+        <TaskSection title={t('dashboard.overdue')} tasks={buckets.overdue} onOpen={setOpenTaskId} accent="bg-red-50 text-red-700" />
+        <TaskSection title={t('dashboard.today')} tasks={buckets.today} onOpen={setOpenTaskId} emptyText={t('dashboard.nothingToday')} />
+        <TaskSection title={t('dashboard.waitingForApproval')} tasks={buckets.waitingApproval} onOpen={setOpenTaskId} accent="bg-amber-50 text-amber-700" />
+        <TaskSection title={t('dashboard.waitingForDelivery')} tasks={buckets.waitingDelivery} onOpen={setOpenTaskId} accent="bg-amber-50 text-amber-700" />
+        <TaskSection title={t('dashboard.nextSevenDays')} tasks={buckets.next7} onOpen={setOpenTaskId} defaultOpen={false} />
+        <TaskSection title={t('dashboard.improvementTasks')} tasks={buckets.improvement} onOpen={setOpenTaskId}
+          emptyText={t('dashboard.noImprovementTasks')} defaultOpen={false} />
+
+        {missingTools.length > 0 && (
+          <details className="group bg-white rounded-2xl border border-gray-100 overflow-hidden">
+            <summary className="cursor-pointer select-none list-none [&::-webkit-details-marker]:hidden px-4 py-3 bg-red-50 text-red-700 flex items-center justify-between text-sm font-semibold">
+              <span className="flex items-center gap-2">
+                <span className="text-gray-400 inline-block transition-transform group-open:rotate-90">▸</span>
+                {t('dashboard.overdueTools')}
+              </span>
+              <span className="inline-flex items-center justify-center min-w-[1.25rem] h-5 px-1.5 rounded-full text-xs font-bold bg-white/70 text-gray-600">{missingTools.length}</span>
+            </summary>
+            <div className="border-t border-gray-100 flex flex-col divide-y divide-gray-50 px-2">
+              {missingTools.map((tl) => (
+                <Link key={tl.item_id} to="/tools" className="flex items-center justify-between py-2.5 px-2 hover:bg-gray-50 rounded-lg -mx-2">
+                  <div className="min-w-0">
+                    <p className="text-sm font-medium text-gray-900 truncate">{tl.name}</p>
+                    <p className="text-xs text-gray-400">{t('tools.assignedTo', { name: tl.assigned_to_name ?? '—' })}</p>
+                  </div>
+                  <Badge variant="low_stock">{t('tools.overdue')}</Badge>
+                </Link>
+              ))}
+            </div>
+          </details>
+        )}
+
+        <TaskSection title={t('dashboard.recentlyCompleted')} tasks={buckets.completed} onOpen={setOpenTaskId} defaultOpen={false} />
       </div>
 
       <div className={`grid grid-cols-1 ${canManage ? 'lg:grid-cols-2' : ''} gap-4`}>
@@ -133,6 +259,10 @@ export default function Dashboard() {
           </Card>
         )}
       </div>
+
+      {openTaskId && (
+        <TaskDetailModal taskId={openTaskId} onClose={() => setOpenTaskId(null)} onChanged={load} />
+      )}
     </div>
   )
 }

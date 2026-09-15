@@ -30,6 +30,11 @@ const ProjectsIcon  = ({ s = 'w-5 h-5' }) => <svg className={s} fill="none" view
 // or a box (Items). Distinct silhouette from every other nav icon.
 const RequestsIcon  = ({ s = 'w-5 h-5' }) => <svg className={s} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}><path strokeLinecap="round" strokeLinejoin="round" d="M21 11.5a8.38 8.38 0 01-.9 3.8 8.5 8.5 0 01-7.6 4.7 8.38 8.38 0 01-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 01-.9-3.8 8.5 8.5 0 014.7-7.6 8.38 8.38 0 013.8-.9h.5a8.48 8.48 0 018 8v.5z"/><path strokeLinecap="round" strokeLinejoin="round" d="M12 8v5M9.5 10.5h5"/></svg>
 const UsersIcon     = ({ s = 'w-5 h-5' }) => <svg className={s} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}><path strokeLinecap="round" strokeLinejoin="round" d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/><path strokeLinecap="round" strokeLinejoin="round" d="M23 21v-2a4 4 0 00-3-3.87M16 3.13a4 4 0 010 7.75"/></svg>
+// A wrench — tools/equipment, distinct from the box (Items) and clipboards
+// (Orders/Counts).
+const ToolsIcon     = ({ s = 'w-5 h-5' }) => <svg className={s} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}><path strokeLinecap="round" strokeLinejoin="round" d="M14.7 6.3a4 4 0 00-5.4 5.4L3 18l3 3 6.3-6.3a4 4 0 005.4-5.4l-2.65 2.65-2.12-2.12L14.7 6.3z"/></svg>
+// A clipboard with a checkmark and a small badge dot — the daily work queue.
+const TasksIcon     = ({ s = 'w-5 h-5' }) => <svg className={s} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}><rect x="5" y="3" width="14" height="18" rx="2"/><path strokeLinecap="round" strokeLinejoin="round" d="M9 8h6M9 12l1.5 1.5L14 10M9 16h4"/></svg>
 const LogoutIcon    = ({ s = 'w-4 h-4' }) => <svg className={s} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}><path strokeLinecap="round" strokeLinejoin="round" d="M9 21H5a2 2 0 01-2-2V5a2 2 0 012-2h4"/><polyline strokeLinecap="round" strokeLinejoin="round" points="16 17 21 12 16 7"/><line strokeLinecap="round" x1="21" y1="12" x2="9" y2="12"/></svg>
 const MoreDotsIcon  = ({ s = 'w-6 h-6' }) => <svg className={s} viewBox="0 0 24 24" fill="currentColor"><circle cx="5" cy="12" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="19" cy="12" r="2"/></svg>
 
@@ -80,6 +85,7 @@ export default function AppLayout() {
   // any of this); refresh() is a deliberate no-op otherwise.
   const openRequestsCount    = useBadgeStore((s) => s.openRequestsCount)
   const ordersAttentionCount = useBadgeStore((s) => s.ordersAttentionCount)
+  const taskAttentionCount   = useBadgeStore((s) => s.taskAttentionCount)
   const hasCountsDraft       = useBadgeStore((s) => s.hasCountsDraft)
   const refreshBadges        = useBadgeStore((s) => s.refresh)
 
@@ -102,6 +108,8 @@ export default function AppLayout() {
 
   const MORE = canManage ? [
     { to: '/items',    icon: <ItemsIcon />,    label: t('nav.items') },
+    { to: '/tasks', icon: <TasksIcon />, label: t('nav.tasks'), badgeCount: taskAttentionCount },
+    { to: '/tools', icon: <ToolsIcon />, label: t('nav.tools') },
     { to: '/requests', icon: <RequestsIcon />, label: t('nav.requests'), badgeCount: openRequestsCount },
     { to: '/counts', icon: <CountsIcon />, label: t('nav.counts'), badgeDot: hasCountsDraft },
     { to: '/orders', icon: <OrdersIcon />, label: t('nav.orders'), badgeCount: ordersAttentionCount },
@@ -112,7 +120,9 @@ export default function AppLayout() {
       { to: '/users',     icon: <UsersIcon />,     label: t('nav.users') },
     ] : []),
     { to: '/reports',    icon: <ReportsIcon />,   label: t('nav.reports') },
-  ] : []
+  ] : [
+    { to: '/tools', icon: <ToolsIcon />, label: t('nav.tools') },
+  ]
 
   const moreActive  = MORE.some(item => location.pathname.startsWith(item.to))
   const moreHasBadge = MORE.some(item => item.badgeCount > 0 || item.badgeDot)

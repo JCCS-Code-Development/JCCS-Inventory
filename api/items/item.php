@@ -44,6 +44,14 @@ if ($method === 'PUT') {
         $sets[]   = 'unit_cost = ?';
         $params[] = (float)$body['unit_cost'];
     }
+    if (array_key_exists('is_trackable_asset', $body)) {
+        $sets[]   = 'is_trackable_asset = ?';
+        $params[] = !empty($body['is_trackable_asset']) ? 1 : 0;
+    }
+    if (array_key_exists('expiration_date', $body)) {
+        $sets[]   = 'expiration_date = ?';
+        $params[] = !empty($body['expiration_date']) ? $body['expiration_date'] : null;
+    }
     if (!$sets) { echo json_encode(['message' => 'Nothing to update']); exit; }
     $params[] = $id;
     $pdo->prepare('UPDATE items SET ' . implode(', ', $sets) . ' WHERE id = ?')->execute($params);

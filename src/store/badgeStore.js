@@ -1,6 +1,7 @@
 import { create } from 'zustand'
 import { listRequests } from '../api/requests'
 import { listOrders } from '../api/orders'
+import { listTasks } from '../api/tasks'
 
 // Drives the small "something needs your attention" bubbles on the
 // Requests/Counts/Orders nav items. Requests + Orders come from the server
@@ -18,6 +19,7 @@ const readCountsDraftFlag = () => {
 export const useBadgeStore = create((set) => ({
   openRequestsCount: 0,
   ordersAttentionCount: 0,
+  taskAttentionCount: 0,
   hasCountsDraft: readCountsDraftFlag(),
 
   // Only specialists/admins act on requests or orders, so this is a no-op
@@ -25,10 +27,12 @@ export const useBadgeStore = create((set) => ({
   refresh: async (canManage) => {
     if (!canManage) return
     try {
-      const [reqData, orderData] = await Promise.all([
+      const [reqData, orderData, taskData] = await Promise.all([
         listRequests({ status: 'open' }),
         listOrders(),
+        listTasks(),
       ])
+      const now = Date.now()
       set({
         openRequestsCount: (reqData.requests ?? []).length,
         // "Needs attention" = an open discrepancy against it, or the
@@ -37,6 +41,10 @@ export const useBadgeStore = create((set) => ({
         // waiting, not something to flag.
         ordersAttentionCount: (orderData.orders ?? [])
           .filter((o) => o.has_open_discrepancy || o.status === 'partially_received' || o.status === 'awaiting_item_setup').length,
+        // Tasks a manager should look at: anything awaiting their approval,
+        // or anything overdue.
+        taskAttentionCount: (taskData.tasks ?? [])
+          .filter((tsk) => tsk.status === 'waiting_approval' || (tsk.due_at && new Date(tsk.due_at).getTime() < now && !['completed', 'canceled'].includes(tsk.status))).length,
       })
     } catch {
       // Transient network blip — badges just stay at their last known value.
