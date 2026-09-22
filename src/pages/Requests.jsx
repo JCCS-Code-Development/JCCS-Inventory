@@ -15,7 +15,7 @@ import Tag from '../components/ui/Tag'
 import { listRequests, createRequest, resolveRequest, updateRequestReview, undoDeclineRequest, deleteRequest } from '../api/requests'
 import { listOrders } from '../api/orders'
 import { listVendors, createVendor } from '../api/vendors'
-import { listItems, createItem } from '../api/items'
+import { listItems } from '../api/items'
 import { useBadgeStore } from '../store/badgeStore'
 import { formatDateTime } from '../utils/format'
 import { useConfirm } from '../components/ConfirmProvider'
@@ -35,17 +35,19 @@ const UNIT_OPTIONS = ['each', 'box', 'case', 'roll', 'gallon', 'bag', 'sheet', '
 // three are filled in), alongside the optional project.
 function RequestForm({
   form, set, error, saving, onSubmit, t, submitLabel,
-  vendors, setVendors, items, setItems,
+  vendors, setVendors, items,
   vendorId, onVendorId, itemId, onItemId,
   onProjectResolved, initialProjectNumber = '', initialProjectName = '',
 }) {
+  // Restock: pick something already in the catalog — vendor/unit come from
+  // the item's own record, no separate vendor lookup or product link needed.
+  // New item: free text is enough to log the need now; a real catalog item
+  // gets matched to (or created for) it later, during the order's Item Setup
+  // stage — see api/orders/confirm-item.php.
+  const [mode, setMode] = useState(itemId ? 'restock' : 'new')
   const [vendorSearch, setVendorSearch] = useState('')
   const [creatingVendor, setCreatingVendor] = useState(false)
   const [itemSearch, setItemSearch] = useState('')
-  const [showCreateItem, setShowCreateItem] = useState(false)
-  const [newSku, setNewSku] = useState('')
-  const [newName, setNewName] = useState('')
-  const [creatingItem, setCreatingItem] = useState(false)
 
   const selectedVendor = vendors.find(v => String(v.id) === String(vendorId)) || null
   const vendorMatches = vendorSearch.trim()
@@ -70,29 +72,48 @@ function RequestForm({
   const itemMatches = itemSearch.trim()
     ? items.filter(it => `${it.sku} ${it.name}`.toLowerCase().includes(itemSearch.trim().toLowerCase()))
     : []
-  const itemExact = items.some(it => it.sku.toLowerCase() === itemSearch.trim().toLowerCase())
-  const handleCreateItem = async () => {
-    const sku = newSku.trim(), name = newName.trim()
-    if (!sku || !name) return
-    setCreatingItem(true)
-    try {
-      const { id } = await createItem({ sku, name })
-      const item = { id, sku, name, unit_of_measure: 'each' }
-      setItems(its => [...its, item])
-      onItemId(id)
-      setItemSearch(''); setShowCreateItem(false); setNewSku(''); setNewName('')
-    } catch { /* surfaced via the disabled state / retry */ }
-    finally { setCreatingItem(false) }
+  // Restocking a known item: the description and (when the item has one) the
+  // vendor come along for free, so picking the item is the whole job.
+  const pickRestockItem = (it) => {
+    onItemId(it.id)
+    set('description')({ target: { value: it.name } })
+    if (it.vendor_id) onVendorId(it.vendor_id)
+    setItemSearch('')
   }
-
   return (
     <form onSubmit={onSubmit} className="flex flex-col gap-4">
-      <div className="flex flex-col gap-1">
-        <label className="text-sm font-medium text-gray-700">{t('requests.whatDoYouNeed')}</label>
-        <textarea value={form.description} onChange={set('description')} rows={3}
-          placeholder={t('requests.descriptionPlaceholder')}
-          className="rounded-xl border border-gray-300 px-4 py-3 text-base outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-100 resize-none" />
+      <div className="grid grid-cols-2 gap-2 p-1 bg-gray-100 rounded-xl">
+        {['restock', 'new'].map((m) => (
+          <button key={m} type="button" onClick={() => setMode(m)}
+            className={`rounded-lg py-2 text-sm font-semibold transition-colors ${
+              mode === m ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500'
+            }`}>
+            {t(m === 'restock' ? 'requests.modeRestock' : 'requests.modeNew')}
+          </button>
+        ))}
       </div>
+
+      {mode === 'restock' ? (
+        <div className="flex flex-col gap-1">
+          <label className="text-sm font-medium text-gray-700">{t('requests.itemLabel')}</label>
+          <SearchSelect
+            selected={selectedItem ? { id: selectedItem.id, label: selectedItem.name, sublabel: selectedItem.sku } : null}
+            onClear={() => { onItemId(null); set('description')({ target: { value: '' } }) }}
+            search={itemSearch} onSearchChange={setItemSearch}
+            results={itemMatches.map(it => ({ id: it.id, label: it.name, sublabel: it.sku }))}
+            onPick={(r) => pickRestockItem(items.find((it) => it.id === r.id))}
+            placeholder={t('requests.searchItemPlaceholder')}
+          />
+          <p className="text-xs text-gray-400">{t('requests.restockHelper')}</p>
+        </div>
+      ) : (
+        <div className="flex flex-col gap-1">
+          <label className="text-sm font-medium text-gray-700">{t('requests.whatDoYouNeed')}</label>
+          <textarea value={form.description} onChange={set('description')} rows={3}
+            placeholder={t('requests.descriptionPlaceholder')}
+            className="rounded-xl border border-gray-300 px-4 py-3 text-base outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-100 resize-none" />
+        </div>
+      )}
 
       <div className="grid grid-cols-2 gap-3">
         <Input label={t('requests.qtyOptional')} type="number" step="0.01" min="0" value={form.qty_requested} onChange={set('qty_requested')} />
@@ -111,67 +132,41 @@ function RequestForm({
 
       <Input label={t('requests.anythingElseOptional')} value={form.notes} onChange={set('notes')} />
 
-      <div className="flex flex-col gap-4 pt-2 border-t border-gray-100">
-        <p className="text-xs font-semibold text-gray-500 -mb-1">{t('requests.reviewSectionTitle')}</p>
+      {mode === 'new' && (
+        <div className="flex flex-col gap-4 pt-2 border-t border-gray-100">
+          <p className="text-xs font-semibold text-gray-500 -mb-1">{t('requests.reviewSectionTitle')}</p>
 
-        <div className="flex flex-col gap-1">
-          <label className="text-sm font-medium text-gray-700">{t('requests.vendorLabel')}</label>
-          <SearchSelect
-            selected={selectedVendor ? { id: selectedVendor.id, label: selectedVendor.name } : null}
-            onClear={() => onVendorId(null)}
-            search={vendorSearch} onSearchChange={setVendorSearch}
-            results={vendorMatches.map(v => ({ id: v.id, label: v.name }))}
-            onPick={(r) => { onVendorId(r.id); setVendorSearch('') }}
-            placeholder={t('requests.searchVendorPlaceholder')}
-            renderCreate={vendorSearch.trim() && !vendorExact && (
-              <Button type="button" variant="secondary" size="sm" loading={creatingVendor} onClick={handleCreateVendor} className="m-1 w-fit">
-                {t('requests.createVendor', { name: vendorSearch.trim() })}
-              </Button>
-            )}
-          />
-        </div>
-
-        <div className="flex flex-col gap-1">
-          <label className="text-sm font-medium text-gray-700">{t('requests.itemLabel')}</label>
-          <SearchSelect
-            selected={selectedItem ? { id: selectedItem.id, label: selectedItem.name, sublabel: selectedItem.sku } : null}
-            onClear={() => onItemId(null)}
-            search={itemSearch} onSearchChange={setItemSearch}
-            results={itemMatches.map(it => ({ id: it.id, label: it.name, sublabel: it.sku }))}
-            onPick={(r) => { onItemId(r.id); setItemSearch('') }}
-            placeholder={t('requests.searchItemPlaceholder')}
-            renderCreate={itemSearch.trim() && !itemExact && (
-              showCreateItem ? (
-                <div className="flex flex-col gap-1.5 p-1">
-                  <input type="text" placeholder={t('common.sku')} value={newSku} onChange={(e) => setNewSku(e.target.value)}
-                    className="rounded-lg border border-gray-300 px-2.5 py-1.5 text-sm outline-none focus:border-brand-500" />
-                  <input type="text" placeholder={t('common.name')} value={newName} onChange={(e) => setNewName(e.target.value)}
-                    className="rounded-lg border border-gray-300 px-2.5 py-1.5 text-sm outline-none focus:border-brand-500" />
-                  <Button type="button" variant="secondary" size="sm" loading={creatingItem}
-                    disabled={!newSku.trim() || !newName.trim()} onClick={handleCreateItem} className="w-fit">
-                    {t('orders.createAndUse')}
-                  </Button>
-                </div>
-              ) : (
-                <Button type="button" variant="secondary" size="sm"
-                  onClick={() => { setShowCreateItem(true); setNewName(itemSearch.trim()) }} className="m-1 w-fit">
-                  {t('orders.createNewItem', { name: itemSearch.trim() })}
+          <div className="flex flex-col gap-1">
+            <label className="text-sm font-medium text-gray-700">{t('requests.vendorLabel')}</label>
+            <SearchSelect
+              selected={selectedVendor ? { id: selectedVendor.id, label: selectedVendor.name } : null}
+              onClear={() => onVendorId(null)}
+              search={vendorSearch} onSearchChange={setVendorSearch}
+              results={vendorMatches.map(v => ({ id: v.id, label: v.name }))}
+              onPick={(r) => { onVendorId(r.id); setVendorSearch('') }}
+              placeholder={t('requests.searchVendorPlaceholder')}
+              renderCreate={vendorSearch.trim() && !vendorExact && (
+                <Button type="button" variant="secondary" size="sm" loading={creatingVendor} onClick={handleCreateVendor} className="m-1 w-fit">
+                  {t('requests.createVendor', { name: vendorSearch.trim() })}
                 </Button>
-              )
-            )}
-          />
-        </div>
+              )}
+            />
+          </div>
 
+          <div className="flex flex-col gap-1">
+            <Input label={t('requests.productLinkLabel')} type="url" placeholder={t('requests.productLinkPlaceholder')}
+              value={form.product_link} onChange={set('product_link')} />
+            <LinkPreviewCard url={form.product_link} />
+          </div>
+        </div>
+      )}
+
+      <div className="flex flex-col gap-4 pt-2 border-t border-gray-100">
         <EstimateNumberField label={t('requests.projectOptional')}
           initialNumber={initialProjectNumber} initialName={initialProjectName}
           onResolved={onProjectResolved} helperText={t('requests.projectHelper')} />
         <Input label={t('requests.projectNoteOptional')} placeholder={t('requests.projectNotePlaceholder')}
           value={form.project_note} onChange={set('project_note')} helperText={t('requests.projectNoteHelper')} />
-        <div className="flex flex-col gap-1.5">
-          <Input label={t('requests.productLinkLabel')} type="url" placeholder={t('requests.productLinkPlaceholder')}
-            value={form.product_link} onChange={set('product_link')} />
-          <LinkPreviewCard url={form.product_link} />
-        </div>
       </div>
 
       {error && <p className="text-xs text-red-500">{error}</p>}
@@ -237,14 +232,14 @@ export default function Requests() {
   const set = (k) => (e) => setForm(f => ({ ...f, [k]: e.target.value }))
   const setEdit = (k) => (e) => setEditForm(f => ({ ...f, [k]: e.target.value }))
 
-  // Vendor + catalog item + a valid product link are what make a request
-  // "ready to order" — enforce all three here, not just server-side.
+  // Restocking a known item (iId set) needs nothing else — vendor/description
+  // come from the item itself. A new/unmatched item needs a vendor, since
+  // that's the only thing api/orders/index.php actually needs from a request
+  // to build an order around it; the catalog item itself can wait for Item
+  // Setup, after the order's registered.
   const validateReview = (f, vId, iId) => {
-    if (!f.description.trim()) return t('requests.describeWhatYouNeed')
-    if (!vId) return t('requests.vendorRequired')
-    if (!iId) return t('requests.itemRequired')
-    const link = f.product_link.trim()
-    if (!link || !/^https?:\/\//i.test(link)) return t('requests.productLinkRequired')
+    if (!f.description.trim()) return iId ? t('requests.itemRequired') : t('requests.describeWhatYouNeed')
+    if (!iId && !vId) return t('requests.vendorRequired')
     return ''
   }
 
@@ -474,7 +469,7 @@ export default function Requests() {
 
       <Modal isOpen={modalOpen} onClose={() => setModalOpen(false)} title={t('requests.newRequest')}>
         <RequestForm form={form} set={set} error={error} saving={saving} onSubmit={handleSubmit} t={t}
-          vendors={vendors} setVendors={setVendors} items={items} setItems={setItems}
+          vendors={vendors} setVendors={setVendors} items={items}
           vendorId={newVendorId} onVendorId={setNewVendorId} itemId={newItemId} onItemId={setNewItemId}
           onProjectResolved={(project) => setNewProjectId(project ? project.id : null)} />
       </Modal>
@@ -482,7 +477,7 @@ export default function Requests() {
       <Modal isOpen={!!editing} onClose={() => setEditing(null)} title={t('requests.editRequest')}>
         {editing && (
           <RequestForm form={editForm} set={setEdit} error={editError} saving={editSaving} onSubmit={handleEditSubmit} t={t}
-            vendors={vendors} setVendors={setVendors} items={items} setItems={setItems}
+            vendors={vendors} setVendors={setVendors} items={items}
             vendorId={editVendorId} onVendorId={setEditVendorId} itemId={editItemId} onItemId={setEditItemId}
             initialProjectNumber={editing.project_number ?? ''} initialProjectName={editing.project_name ?? ''}
             onProjectResolved={(project) => setEditProjectId(project ? project.id : null)}

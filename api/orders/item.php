@@ -42,11 +42,11 @@ if ($method === 'GET') {
                 c.name AS category_name, m.name AS material_name,
                 cf.name AS item_confirmed_by_name
          FROM order_items oi
-         JOIN items i ON i.id = oi.item_id
+         LEFT JOIN items i ON i.id = oi.item_id
          LEFT JOIN categories c ON c.id = i.category_id
          LEFT JOIN materials m  ON m.id = i.material_id
          LEFT JOIN inventory_user_roles cf ON cf.fieldclock_user_id = oi.item_confirmed_by
-         WHERE oi.order_id = ? ORDER BY i.name"
+         WHERE oi.order_id = ? ORDER BY i.name IS NULL, i.name"
     );
     $lines->execute([$id]);
     $order['items'] = $lines->fetchAll();
@@ -56,7 +56,7 @@ if ($method === 'GET') {
     requireInventoryAdmin($auth);
     $body = jsonBody();
     $allowed = [
-        'order_number', 'vendor_id', 'expected_date', 'notes', 'status',
+        'order_number', 'vendor_id', 'order_date', 'expected_date', 'notes', 'status',
         'order_type', 'invoice_number', 'receipt_number', 'purchased_by_user_id', 'destination_location_id',
     ];
     if (isset($body['status']) && !in_array($body['status'], ['awaiting_item_setup', 'placed', 'partially_received', 'received', 'cancelled'], true)) {

@@ -17,11 +17,14 @@ requireSpecialistOrAdmin($auth);
 $pdo    = getPDO();
 $method = $_SERVER['REQUEST_METHOD'];
 
-// A request is "ready to order" once review has pinned down all three of:
-// vendor to buy from, the specific product page, and the catalog item it
-// maps to. Kept as one string so the Orders "Ready to Order" queue and the
+// A request is "ready to order" once it has a vendor to buy from — that's
+// the only thing an order actually needs from it (see api/orders/index.php).
+// The catalog item + product link are still useful when known, but no
+// longer required: an unmatched item can go through as a free-text order
+// line and get matched to (or turned into) a real catalog item later, during
+// Item Setup. Kept as one string so the Orders "Ready to Order" queue and the
 // CSV export stay in lockstep.
-const READY_TO_ORDER_SQL = "r.vendor_id IS NOT NULL AND r.product_link IS NOT NULL AND r.item_id IS NOT NULL";
+const READY_TO_ORDER_SQL = "r.vendor_id IS NOT NULL";
 
 if ($method === 'GET') {
     $where  = [];
@@ -78,9 +81,14 @@ if ($method === 'GET') {
     $itemId = null;
     if (!empty($body['item_id'])) {
         $itemId = (int)$body['item_id'];
-        $chk = $pdo->prepare('SELECT 1 FROM items WHERE id = ?');
+        $chk = $pdo->prepare('SELECT vendor_id FROM items WHERE id = ?');
         $chk->execute([$itemId]);
-        if (!$chk->fetch()) { http_response_code(422); exit(json_encode(['error' => 'Unknown item'])); }
+        $itemRow = $chk->fetch();
+        if (!$itemRow) { http_response_code(422); exit(json_encode(['error' => 'Unknown item'])); }
+        // Restocking something already in the catalog: default the vendor to
+        // whoever it's normally bought from, so picking the item is enough
+        // on its own — no separate vendor lookup needed for the common case.
+        if (!$vendorId && $itemRow['vendor_id']) { $vendorId = (int)$itemRow['vendor_id']; }
     }
 
     $projectId = null;

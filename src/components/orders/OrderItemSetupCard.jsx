@@ -4,8 +4,9 @@ import Button from '../ui/Button'
 import Input from '../ui/Input'
 import Badge from '../ui/Badge'
 import Spinner from '../ui/Spinner'
-import { getOrder, confirmOrderItem, unconfirmOrderItem, setOrderLineItem } from '../../api/orders'
-import { updateItem } from '../../api/items'
+import SearchSelect from '../ui/SearchSelect'
+import { getOrder, confirmOrderItem, unconfirmOrderItem, setOrderLineItem, addOrderLine } from '../../api/orders'
+import { updateItem, createItem } from '../../api/items'
 import { listMaterials, createMaterial } from '../../api/materials'
 import { createCategory } from '../../api/categories'
 import { translateCategoryName, translateMaterialName } from '../../utils/catalogNames'
@@ -74,6 +75,72 @@ export default function OrderItemSetupCard({ order, categories, allItems, onCate
           <LineSetupRow key={line.id} line={line} categories={categories} allItems={allItems}
             onCategoryCreated={onCategoryCreated} onChanged={handleLineChanged} />
         ))}
+        {/* Orders can now be registered with zero lines (just the
+            attachment/number/date) — this is where they get filled in,
+            whenever the Lead gets to it. */}
+        <AddLineRow orderId={detail.id} allItems={allItems} onAdded={handleLineChanged} />
+      </div>
+    </div>
+  )
+}
+
+function AddLineRow({ orderId, allItems, onAdded }) {
+  const { t } = useTranslation()
+  const toast = useToast()
+  const [open, setOpen] = useState(false)
+  const [itemId, setItemId] = useState(null)
+  const [itemSearch, setItemSearch] = useState('')
+  const [qty, setQty] = useState('')
+  const [saving, setSaving] = useState(false)
+
+  const itemMatches = itemSearch.trim()
+    ? allItems.filter(it => `${it.sku} ${it.name}`.toLowerCase().includes(itemSearch.trim().toLowerCase()))
+    : []
+  const selectedItem = allItems.find(it => it.id === itemId) || null
+
+  const reset = () => { setOpen(false); setItemId(null); setItemSearch(''); setQty('') }
+
+  const handleAdd = async () => {
+    if (!qty || (!itemId && !itemSearch.trim())) return
+    setSaving(true)
+    try {
+      await addOrderLine({
+        order_id: orderId,
+        item_id: itemId || null,
+        description: itemId ? null : itemSearch.trim(),
+        qty_ordered: parseFloat(qty),
+      })
+      reset()
+      onAdded?.()
+    } catch (err) { toast.error(err?.response?.data?.error ?? t('common.couldNotSave')) }
+    finally { setSaving(false) }
+  }
+
+  if (!open) {
+    return (
+      <Button type="button" variant="secondary" size="sm" onClick={() => setOpen(true)} className="w-fit">
+        {t('orders.addLine')}
+      </Button>
+    )
+  }
+
+  return (
+    <div className="rounded-xl border border-gray-200 p-3 flex flex-col gap-2">
+      <SearchSelect
+        selected={selectedItem ? { id: selectedItem.id, label: selectedItem.name, sublabel: selectedItem.sku } : null}
+        onClear={() => setItemId(null)}
+        search={itemSearch} onSearchChange={setItemSearch}
+        results={itemMatches.map(it => ({ id: it.id, label: it.name, sublabel: it.sku }))}
+        onPick={(r) => { setItemId(r.id); setItemSearch('') }}
+        placeholder={t('orders.searchItemOrDescribe')}
+      />
+      <div className="flex gap-2">
+        <input type="number" step="0.01" placeholder={t('receiving.qty')} value={qty} onChange={(e) => setQty(e.target.value)}
+          className="w-24 rounded-xl border border-gray-300 px-3 py-2.5 text-sm outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-100" />
+        <Button type="button" size="sm" loading={saving} disabled={!qty || (!itemId && !itemSearch.trim())} onClick={handleAdd}>
+          {t('orders.addLine')}
+        </Button>
+        <Button type="button" variant="secondary" size="sm" onClick={reset}>{t('common.cancel')}</Button>
       </div>
     </div>
   )
@@ -84,7 +151,7 @@ function LineSetupRow({ line, categories, allItems, onCategoryCreated, onChanged
   const toast = useToast()
 
   const seed = () => ({
-    name: line.item_name ?? '', sku: line.sku ?? '',
+    name: line.item_name ?? line.description ?? '', sku: line.sku ?? '',
     category_id: line.category_id ? String(line.category_id) : '',
     material_id: line.material_id ? String(line.material_id) : '',
     unit_of_measure: line.unit_of_measure ?? 'each',
@@ -103,6 +170,7 @@ function LineSetupRow({ line, categories, allItems, onCategoryCreated, onChanged
   const [newMat, setNewMat] = useState('')
   const [saving, setSaving] = useState(false)
   const [acting, setActing] = useState(false)
+  const [itemSearch, setItemSearch] = useState('')
 
   // Re-seed when the parent hands us a fresh line (e.g. after repointing).
   useEffect(() => { const s = seed(); setForm(s); setBaseline(s) }, [line.id, line.item_id, line.item_name, line.sku, line.category_id, line.material_id]) // eslint-disable-line react-hooks/exhaustive-deps
@@ -133,18 +201,26 @@ function LineSetupRow({ line, categories, allItems, onCategoryCreated, onChanged
   const handleSaveItem = async () => {
     if (!form.name.trim() || !form.sku.trim()) { toast.error(t('items.skuNameRequired')); return }
     setSaving(true)
+    const itemPayload = {
+      name: form.name.trim(),
+      sku: form.sku.trim(),
+      category_id: form.category_id || null,
+      material_id: form.material_id || null,
+      unit_of_measure: form.unit_of_measure || 'each',
+      unit_cost: form.unit_cost !== '' ? parseFloat(form.unit_cost) : null,
+      vendor_item_number: form.vendor_item_number || null,
+      dimensions: form.dimensions || null,
+      reorder_point: form.reorder_point !== '' ? parseInt(form.reorder_point, 10) : null,
+    }
     try {
-      await updateItem(line.item_id, {
-        name: form.name.trim(),
-        sku: form.sku.trim(),
-        category_id: form.category_id || null,
-        material_id: form.material_id || null,
-        unit_of_measure: form.unit_of_measure || 'each',
-        unit_cost: form.unit_cost !== '' ? parseFloat(form.unit_cost) : null,
-        vendor_item_number: form.vendor_item_number || null,
-        dimensions: form.dimensions || null,
-        reorder_point: form.reorder_point !== '' ? parseInt(form.reorder_point, 10) : null,
-      })
+      if (line.item_id) {
+        await updateItem(line.item_id, itemPayload)
+      } else {
+        // This line was registered as free text (no catalog match yet) —
+        // create the real catalog item now and point the line at it.
+        const { id } = await createItem(itemPayload)
+        await setOrderLineItem(line.id, id)
+      }
       setBaseline(form)
       toast.success(t('items.saved'))
       onChanged?.()
@@ -209,6 +285,10 @@ function LineSetupRow({ line, categories, allItems, onCategoryCreated, onChanged
     )
   }
 
+  const itemMatches = itemSearch.trim()
+    ? allItems.filter(it => `${it.sku} ${it.name}`.toLowerCase().includes(itemSearch.trim().toLowerCase()))
+    : []
+
   return (
     <div className="rounded-xl border border-gray-200 p-3 flex flex-col gap-3">
       <div className="flex items-center justify-between gap-2">
@@ -217,6 +297,23 @@ function LineSetupRow({ line, categories, allItems, onCategoryCreated, onChanged
         </p>
         {missing && <span className="text-xs font-semibold text-red-500">{t('orders.itemNeedsCategory')}</span>}
       </div>
+
+      {!line.item_id && (
+        <div className="flex flex-col gap-1">
+          {line.description && (
+            <p className="text-xs text-gray-500 italic">{t('orders.registeredAs', { text: line.description })}</p>
+          )}
+          <label className="text-sm font-medium text-gray-700">{t('orders.matchExistingItem')}</label>
+          <SearchSelect
+            selected={null}
+            search={itemSearch} onSearchChange={setItemSearch}
+            results={itemMatches.map(it => ({ id: it.id, label: it.name, sublabel: it.sku }))}
+            onPick={(r) => { handleUseInstead(allItems.find((it) => it.id === r.id)); setItemSearch('') }}
+            placeholder={t('orders.searchItemPlaceholder')}
+          />
+          <p className="text-xs text-gray-400">{t('orders.orRegisterNewBelow')}</p>
+        </div>
+      )}
 
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
         <Input label={t('common.name')} value={form.name} onChange={set('name')} placeholder={t('items.namePlaceholder')} />

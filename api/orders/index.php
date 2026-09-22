@@ -52,11 +52,17 @@ if ($method === 'GET') {
 } elseif ($method === 'POST') {
     // Registering orders — online or a drop-off of something already bought
     // — is the Inventory Lead's job too, same as registering products.
+    //
+    // Kept deliberately minimal so registering an order never has to wait on
+    // catalog work or paperwork: only the proof (photo/PDF, attached
+    // separately right after this call), the order_number, and order_date
+    // are required. Vendor, line items, invoice/receipt numbers, etc. are
+    // all optional and can be filled in later — line items in particular go
+    // through the Item Setup stage before the order can be received.
     requireSpecialistOrAdmin($auth);
     $body = jsonBody();
-    requireFields($body, ['items']);
-    $items = $body['items'];
-    if (!is_array($items) || !$items) { http_response_code(422); exit(json_encode(['error' => 'Order needs at least one line item'])); }
+    requireFields($body, ['order_number', 'order_date']);
+    $items = is_array($body['items'] ?? null) ? $body['items'] : [];
 
     $orderType = in_array($body['order_type'] ?? 'online', ['online', 'dropoff'], true) ? $body['order_type'] : 'online';
 
@@ -99,16 +105,6 @@ if ($method === 'GET') {
         $vendorId = $reqVendors[0];
     }
 
-    if ($orderType === 'dropoff') {
-        if (!$vendorId)     { http_response_code(422); exit(json_encode(['error' => 'Choose where it was purchased from'])); }
-        if (!$purchasedBy)  { http_response_code(422); exit(json_encode(['error' => 'Choose who purchased it'])); }
-        if (!$destination)  { http_response_code(422); exit(json_encode(['error' => 'Choose which warehouse it\'s going to'])); }
-        if (empty($body['receipt_number'])) { http_response_code(422); exit(json_encode(['error' => 'Receipt number is required for a drop-off'])); }
-    } else { // online
-        if (empty($body['expected_date']))   { http_response_code(422); exit(json_encode(['error' => 'Expected arrival date is required for an online order'])); }
-        if (empty($body['invoice_number']))  { http_response_code(422); exit(json_encode(['error' => 'Invoice number is required for an online order'])); }
-    }
-
     if ($purchasedBy) {
         $chk = $pdo->prepare('SELECT 1 FROM inventory_user_roles WHERE fieldclock_user_id = ?');
         $chk->execute([$purchasedBy]);
@@ -119,39 +115,45 @@ if ($method === 'GET') {
         $chk->execute([$destination]);
         if (!$chk->fetch()) { http_response_code(422); exit(json_encode(['error' => 'Unknown destination location'])); }
     }
+    if (!preg_match('/^\d{4}-\d{2}-\d{2}$/', (string)$body['order_date'])) {
+        http_response_code(422); exit(json_encode(['error' => 'order_date must be a valid date']));
+    }
 
     $pdo->beginTransaction();
     try {
         $pdo->prepare(
             'INSERT INTO orders
                 (order_number, vendor_id, order_type, invoice_number, receipt_number,
-                 purchased_by_user_id, destination_location_id, expected_date, notes, placed_by)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
+                 purchased_by_user_id, destination_location_id, order_date, expected_date, notes, placed_by)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
         )->execute([
-            !empty($body['order_number']) ? sanitizeString($body['order_number']) : null,
+            sanitizeString($body['order_number']),
             $vendorId,
             $orderType,
             !empty($body['invoice_number']) ? sanitizeString($body['invoice_number']) : null,
             !empty($body['receipt_number']) ? sanitizeString($body['receipt_number']) : null,
             $purchasedBy,
             $destination,
+            $body['order_date'],
             !empty($body['expected_date']) ? $body['expected_date'] : null,
             !empty($body['notes']) ? sanitizeString($body['notes']) : null,
             $auth['user_id'],
         ]);
         $orderId = (int)$pdo->lastInsertId();
 
-        $lineStmt = $pdo->prepare('INSERT INTO order_items (order_id, item_id, qty_ordered, unit_cost) VALUES (?, ?, ?, ?)');
-        $lineCount = 0;
+        // Each line is either a real catalog item or, if it hasn't been
+        // matched to one yet, just a free-text description — the Item Setup
+        // stage is where that gets resolved before the order can be received.
+        $lineStmt = $pdo->prepare('INSERT INTO order_items (order_id, item_id, description, qty_ordered, unit_cost) VALUES (?, ?, ?, ?, ?)');
         foreach ($items as $line) {
-            if (empty($line['item_id']) || empty($line['qty_ordered'])) continue;
+            $itemId      = !empty($line['item_id']) ? (int)$line['item_id'] : null;
+            $description = !$itemId && !empty($line['description']) ? sanitizeString($line['description']) : null;
+            if ((!$itemId && !$description) || empty($line['qty_ordered'])) continue;
             $lineStmt->execute([
-                $orderId, (int)$line['item_id'], (float)$line['qty_ordered'],
+                $orderId, $itemId, $description, (float)$line['qty_ordered'],
                 isset($line['unit_cost']) && $line['unit_cost'] !== '' ? (float)$line['unit_cost'] : null,
             ]);
-            $lineCount++;
         }
-        if ($lineCount === 0) { http_response_code(422); exit(json_encode(['error' => 'Order needs at least one valid line item'])); }
 
         // Close the loop on every source request in the same transaction — a
         // half-linked batch (order saved but some tickets left open) is worse

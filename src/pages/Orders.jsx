@@ -36,7 +36,7 @@ import { useToast } from '../components/ToastProvider'
 // don't need separate index-keyed state that'd go stale when a line is removed.
 const EMPTY_LINE = { item_id: '', qty_ordered: '', unit_cost: '', itemSearch: '', showCreateItem: false, newSku: '', newName: '' }
 const EMPTY_FORM = {
-  order_type: 'online', order_number: '', vendor_id: '', expected_date: '', notes: '',
+  order_type: 'online', order_number: '', order_date: '', vendor_id: '', expected_date: '', notes: '',
   invoice_number: '', receipt_number: '', purchased_by_user_id: '', destination_location_id: '',
 }
 
@@ -377,33 +377,31 @@ export default function Orders() {
   }
 
   const handleCreate = async () => {
-    const validLines = lines.filter(l => l.item_id && l.qty_ordered)
-    // A line with a search typed in (or a qty entered) but no item actually
-    // picked/created is easy to miss — it just silently wouldn't count
-    // toward validLines otherwise, so "I filled everything out" ends up
-    // either submitting fewer lines than expected or hitting the generic
-    // "add at least one line" message with no hint why. Block and say
-    // exactly which line(s) still need an item selected or created.
-    const incomplete = lines.filter(l => !l.item_id && (l.itemSearch.trim() || l.qty_ordered))
+    // Kept to the bare minimum so registering an order never waits on
+    // catalog work or paperwork: the proof (attachment), the order number,
+    // and the date it was placed. Vendor, line items, invoice/receipt
+    // numbers, etc. can all be filled in later.
+    if (!pendingAttachment) { setError(t('orders.attachmentRequired')); return }
+    if (!form.order_number.trim()) { setError(t('orders.orderNumberRequired')); return }
+    if (!form.order_date) { setError(t('orders.orderDateRequired')); return }
+
+    // A line with a search typed in (or a qty entered) but no quantity/item
+    // at all is easy to miss otherwise — flag it rather than silently
+    // dropping it. A picked item or typed description without a catalog
+    // match are both fine now; a real catalog item can wait for Item Setup.
+    const hasContent = (l) => l.item_id || l.itemSearch.trim()
+    const validLines = lines.filter(l => hasContent(l) && l.qty_ordered)
+    const incomplete = lines.filter(l => hasContent(l) && !l.qty_ordered)
     if (incomplete.length) {
-      setError(t('orders.linesNeedItem', { count: incomplete.length }))
+      setError(t('orders.linesNeedQty', { count: incomplete.length }))
       return
-    }
-    if (!validLines.length) { setError(t('orders.addLeastOneLine')); return }
-    if (form.order_type === 'dropoff') {
-      if (!form.vendor_id) { setError(t('orders.chooseWherePurchased')); return }
-      if (!form.purchased_by_user_id) { setError(t('orders.chooseWhoPurchased')); return }
-      if (!form.destination_location_id) { setError(t('orders.chooseWarehouseGoing')); return }
-      if (!form.receipt_number.trim()) { setError(t('orders.receiptNumberRequired')); return }
-    } else {
-      if (!form.expected_date) { setError(t('orders.expectedDateRequired')); return }
-      if (!form.invoice_number.trim()) { setError(t('orders.invoiceNumberRequired')); return }
     }
     setSaving(true); setError('')
     try {
       const { id } = await createOrder({
         order_type: form.order_type,
-        order_number: form.order_number || null,
+        order_number: form.order_number.trim(),
+        order_date: form.order_date,
         vendor_id: form.vendor_id || null,
         expected_date: form.expected_date || null,
         invoice_number: form.invoice_number || null,
@@ -417,15 +415,14 @@ export default function Orders() {
         // resolve loop to half-fail.
         request_ids: fromRequests.length ? fromRequests.map(r => r.id) : undefined,
         items: validLines.map(l => ({
-          item_id: l.item_id, qty_ordered: parseFloat(l.qty_ordered),
+          item_id: l.item_id || null,
+          description: l.item_id ? null : l.itemSearch.trim(),
+          qty_ordered: parseFloat(l.qty_ordered),
           unit_cost: l.unit_cost ? parseFloat(l.unit_cost) : null,
         })),
       })
-      // Soft-fail: a failed attachment upload shouldn't undo a successful order.
-      if (pendingAttachment) {
-        try { await uploadOrderAttachment(id, pendingAttachment) }
-        catch { /* order still saved fine; can be attached later from the detail view */ }
-      }
+      try { await uploadOrderAttachment(id, pendingAttachment) }
+      catch { toast.error(t('orders.attachmentUploadFailed')) }
       if (fromRequests.length) {
         setFromRequests([])
         loadReady()
@@ -824,27 +821,17 @@ export default function Orders() {
               </div>
             </div>
           )}
-          <div className="flex flex-col gap-1">
-            <label className="text-sm font-medium text-gray-700">{t('orders.orderType')}</label>
-            <div className="grid grid-cols-2 gap-2">
-              {['online', 'dropoff'].map((ty) => (
-                <button key={ty} type="button" onClick={() => setForm(f => ({ ...f, order_type: ty }))}
-                  className={`rounded-xl border px-4 py-3 text-sm font-semibold text-left transition-colors ${
-                    form.order_type === ty ? 'border-brand-500 bg-brand-100 text-brand-800' : 'border-gray-300 text-gray-600 hover:border-gray-400'
-                  }`}>
-                  {ty === 'online' ? t('orders.type.online') : t('orders.dropoffLong')}
-                  <span className="block text-xs font-normal opacity-70 mt-0.5">
-                    {ty === 'online' ? t('orders.onlineHint') : t('orders.dropoffHint')}
-                  </span>
-                </button>
-              ))}
-            </div>
+          {/* The only three things actually required to register an order —
+              everything below this is optional and can be filled in later. */}
+          <div className="grid grid-cols-2 gap-3">
+            <Input label={t('orders.orderPoNumber')} value={form.order_number} onChange={set('order_number')} />
+            <Input label={t('orders.orderDate')} type="date" value={form.order_date} onChange={set('order_date')} />
           </div>
 
           {/* Attach the receipt photo or invoice PDF as the permanent record */}
           <div className="flex flex-col gap-1">
             <label className="text-sm font-medium text-gray-700">
-              {form.order_type === 'dropoff' ? t('orders.receiptPhoto') : t('orders.invoicePhotoOrPdf')} <span className="text-gray-400 font-normal">({t('common.optional')})</span>
+              {form.order_type === 'dropoff' ? t('orders.receiptPhoto') : t('orders.invoicePhotoOrPdf')}
             </label>
             <input ref={attachmentInputRef} type="file" accept="image/*,application/pdf" capture="environment" onChange={handleAttachmentPick} className="hidden" />
             {pendingAttachment ? (
@@ -895,13 +882,30 @@ export default function Orders() {
             )}
           </div>
 
-          <div className="grid grid-cols-2 gap-3">
-            <Input label={t('orders.orderPoNumberOptional')} value={form.order_number} onChange={set('order_number')} />
-            {form.order_type === 'online' ? (
-              <Input label={t('orders.expectedArrivalDate')} type="date" value={form.expected_date} onChange={set('expected_date')} />
-            ) : (
-              <Input label={t('orders.receiptNumberField')} value={form.receipt_number} onChange={set('receipt_number')} placeholder={t('orders.fromTheReceipt')} />
-            )}
+          <div className="flex flex-col gap-4 pt-2 border-t border-gray-100">
+            <p className="text-xs font-semibold text-gray-500 -mb-1">{t('orders.optionalDetailsHint')}</p>
+
+            <div className="grid grid-cols-2 gap-2">
+              {['online', 'dropoff'].map((ty) => (
+                <button key={ty} type="button" onClick={() => setForm(f => ({ ...f, order_type: ty }))}
+                  className={`rounded-xl border px-4 py-3 text-sm font-semibold text-left transition-colors ${
+                    form.order_type === ty ? 'border-brand-500 bg-brand-100 text-brand-800' : 'border-gray-300 text-gray-600 hover:border-gray-400'
+                  }`}>
+                  {ty === 'online' ? t('orders.type.online') : t('orders.dropoffLong')}
+                  <span className="block text-xs font-normal opacity-70 mt-0.5">
+                    {ty === 'online' ? t('orders.onlineHint') : t('orders.dropoffHint')}
+                  </span>
+                </button>
+              ))}
+            </div>
+
+            <div className="grid grid-cols-2 gap-3">
+              {form.order_type === 'online' ? (
+                <Input label={t('orders.expectedArrivalDate')} type="date" value={form.expected_date} onChange={set('expected_date')} />
+              ) : (
+                <Input label={t('orders.receiptNumberField')} value={form.receipt_number} onChange={set('receipt_number')} placeholder={t('orders.fromTheReceipt')} />
+              )}
+            </div>
           </div>
 
           <div className="flex flex-col gap-1">
@@ -969,12 +973,12 @@ export default function Orders() {
               const selectedItem = items.find(it => String(it.id) === String(line.item_id)) || null
               const itemMatches = itemMatchesFor(line)
               const itemExactMatch = items.some(it => it.sku.toLowerCase() === line.itemSearch.trim().toLowerCase())
-              // Typed a search or a qty but never actually picked/created the
-              // item — this line won't count toward the order as-is, and
-              // that's easy to miss, so flag it before Save does.
-              const needsItem = !line.item_id && (line.itemSearch.trim() || line.qty_ordered)
+              // A picked item or a typed description without a catalog match
+              // are both fine now (an unmatched one goes through Item Setup
+              // later) — the only thing actually missing a qty would block.
+              const needsQty = (line.item_id || line.itemSearch.trim()) && !line.qty_ordered
               return (
-                <div key={i} className={`flex flex-col gap-2 rounded-xl border p-2.5 ${needsItem ? 'border-amber-300 bg-amber-50/50' : 'border-gray-100'}`}>
+                <div key={i} className={`flex flex-col gap-2 rounded-xl border p-2.5 ${needsQty ? 'border-amber-300 bg-amber-50/50' : 'border-gray-100'}`}>
                   <div className="flex items-start gap-2">
                     <div className="flex-1 min-w-0">
                       <SearchSelect
@@ -1008,8 +1012,8 @@ export default function Orders() {
                           )
                         )}
                       />
-                      {needsItem && (
-                        <p className="text-xs font-medium text-amber-700 mt-1.5">{t('orders.lineNeedsItemHint')}</p>
+                      {needsQty && (
+                        <p className="text-xs font-medium text-amber-700 mt-1.5">{t('orders.lineNeedsQtyHint')}</p>
                       )}
                     </div>
                     {lines.length > 1 && (
@@ -1097,7 +1101,9 @@ export default function Orders() {
                 <tbody className="divide-y divide-gray-100">
                   {detail.items.map(li => (
                     <tr key={li.id}>
-                      <td className="px-3 py-2 text-gray-900">{li.sku} — {li.item_name}</td>
+                      <td className="px-3 py-2 text-gray-900">
+                        {li.item_id ? `${li.sku} — ${li.item_name}` : (li.description || t('orders.unidentifiedItemFallback'))}
+                      </td>
                       <td className="px-3 py-2 text-gray-600">{li.qty_ordered} {li.unit_of_measure}</td>
                       <td className="px-3 py-2 text-gray-600">{li.qty_received} {li.unit_of_measure}</td>
                       <td className="px-3 py-2 text-gray-600">{li.unit_cost != null ? formatCurrency(li.unit_cost) : '—'}</td>

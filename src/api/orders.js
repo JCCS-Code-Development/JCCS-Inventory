@@ -15,6 +15,11 @@ export const unconfirmOrderItem = (orderItemId) =>
   client.post('/orders/confirm-item.php', { order_item_id: orderItemId, undo: true }).then((r) => r.data)
 export const setOrderLineItem = (orderItemId, itemId) =>
   client.patch('/orders/line.php', { order_item_id: orderItemId, item_id: itemId }).then((r) => r.data)
+// Adds a line to an order after it's already been registered — orders can
+// now be created with zero lines (just the attachment/number/date), with
+// items filled in afterward.
+export const addOrderLine = (payload) =>
+  client.post('/orders/line.php', payload).then((r) => r.data)
 export const deleteOrder = (id) => client.delete(`/orders/item.php?id=${id}`).then((r) => r.data)
 // Marks a partially received order as done even though it never reached
 // full quantity — for when nothing more is actually coming (a vendor credit

@@ -2,6 +2,7 @@ import client from './client'
 
 export const getStockReport = (params = {}) => client.get('/reports/stock.php', { params }).then((r) => r.data)
 export const getLowStockReport = (params = {}) => client.get('/reports/low-stock.php', { params }).then((r) => r.data)
+export const getFrequentlyUsedLowStockReport = (params = {}) => client.get('/reports/frequently-used-low-stock.php', { params }).then((r) => r.data)
 export const getProjectUsageReport = (params = {}) => client.get('/reports/project-usage.php', { params }).then((r) => r.data)
 export const getReorderPlanningReport = (params = {}) => client.get('/reports/reorder-planning.php', { params }).then((r) => r.data)
 

@@ -8,7 +8,7 @@ import Badge from '../components/ui/Badge'
 import Spinner from '../components/ui/Spinner'
 import { listItems } from '../api/items'
 import { listLocations } from '../api/locations'
-import { getLowStockReport } from '../api/reports'
+import { getLowStockReport, getFrequentlyUsedLowStockReport } from '../api/reports'
 import { listOrders } from '../api/orders'
 import { useAuthStore } from '../store/authStore'
 import { formatDate, formatQty } from '../utils/format'
@@ -51,6 +51,7 @@ export default function Dashboard() {
   const [itemCount, setItemCount]     = useState(0)
   const [locationCount, setLocationCount] = useState(0)
   const [lowStock, setLowStock]       = useState([])
+  const [frequentLowStock, setFrequentLowStock] = useState([])
   const [openOrders, setOpenOrders]   = useState([])
 
   useEffect(() => {
@@ -58,11 +59,13 @@ export default function Dashboard() {
       listItems({ active: 1 }),
       listLocations({ active: 1 }),
       getLowStockReport(),
+      getFrequentlyUsedLowStockReport(),
       canManage ? listOrders() : Promise.resolve({ orders: [] }),
-    ]).then(([items, locations, low, orders]) => {
+    ]).then(([items, locations, low, frequentLow, orders]) => {
       setItemCount(items.items?.length ?? 0)
       setLocationCount(locations.locations?.length ?? 0)
       setLowStock(low.items ?? [])
+      setFrequentLowStock(frequentLow.items ?? [])
       setOpenOrders((orders.orders ?? []).filter(o => OPEN_STATUSES.includes(o.status)))
     }).finally(() => setLoading(false))
   }, [canManage])
@@ -100,6 +103,24 @@ export default function Dashboard() {
                   <div className="min-w-0">
                     <p className="text-sm font-medium text-gray-900 truncate">{row.name}</p>
                     <p className="text-xs text-gray-400">{row.location_name}</p>
+                  </div>
+                  <Badge variant="low_stock">{formatQty(row.qty_on_hand, row.unit_of_measure)}</Badge>
+                </div>
+              ))}
+            </div>
+          )}
+        </Card>
+
+        <Card title={t('dashboard.frequentlyUsedLowStock')}>
+          {frequentLowStock.length === 0 ? (
+            <p className="text-sm text-gray-400 py-6 text-center">{t('dashboard.nothingFrequentlyUsedLow')}</p>
+          ) : (
+            <div className="flex flex-col divide-y divide-gray-100">
+              {frequentLowStock.map((row) => (
+                <div key={row.item_id} className="flex items-center justify-between py-2.5">
+                  <div className="min-w-0">
+                    <p className="text-sm font-medium text-gray-900 truncate">{row.name}</p>
+                    <p className="text-xs text-gray-400">{t('dashboard.usedNTimes', { count: row.usage_count })}</p>
                   </div>
                   <Badge variant="low_stock">{formatQty(row.qty_on_hand, row.unit_of_measure)}</Badge>
                 </div>

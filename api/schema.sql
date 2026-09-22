@@ -168,6 +168,10 @@ CREATE TABLE `orders` (
   `purchased_by_user_id`     INT UNSIGNED  NULL, -- who physically bought it (dropoff flow) — an inventory_user_roles account
   `destination_location_id`  INT UNSIGNED  NULL, -- which warehouse it's being stored at
   `attachment_path`          VARCHAR(255)  NULL, -- the scanned receipt photo or invoice PDF, kept as the permanent record
+  -- The date the order was actually placed with the vendor (or the drop-off
+  -- purchase date) — distinct from expected_date (when it should arrive) and
+  -- created_at (when someone got around to registering it in this app).
+  `order_date`               DATE          NULL,
   `expected_date`            DATE          NULL,
   `notes`                    TEXT          NULL,
   `placed_by`                INT UNSIGNED  NOT NULL,
@@ -182,14 +186,22 @@ CREATE TABLE `orders` (
 CREATE TABLE `order_items` (
   `id`           INT UNSIGNED  NOT NULL AUTO_INCREMENT,
   `order_id`     INT UNSIGNED  NOT NULL,
-  `item_id`      INT UNSIGNED  NOT NULL,
+  -- Nullable: a line can be registered from a free-text description before
+  -- anyone has matched it to a real catalog item (same pattern as
+  -- order_discrepancy_items). Item Setup is where item_id gets set.
+  `item_id`      INT UNSIGNED  NULL,
+  -- Only meaningful while item_id is NULL — what the line was ordered as
+  -- before a catalog item existed for it. Left in place (not cleared) once
+  -- item_id is set, as a record of the original wording.
+  `description`  VARCHAR(500)  NULL,
   `qty_ordered`  DECIMAL(12,2) NOT NULL,
   `qty_received` DECIMAL(12,2) NOT NULL DEFAULT 0.00,
   `unit_cost`    DECIMAL(10,2) NULL,
-  -- Set on the Orders "Item Setup" tab once a Lead has vetted this line's
-  -- catalog item (proper name/SKU/category, not a duplicate). NULL = still
-  -- needs setup; the order can't move to 'placed' / be received until every
-  -- line is confirmed. See api/orders/confirm-item.php.
+  -- Set on the Orders "Item Setup" tab once a Lead has matched this line to a
+  -- real catalog item (proper name/SKU/category, not a duplicate) — creating
+  -- one on the spot if item_id isn't set yet. NULL = still needs setup; the
+  -- order can't move to 'placed' / be received until every line is
+  -- confirmed. See api/orders/confirm-item.php.
   `item_confirmed_at` TIMESTAMP    NULL DEFAULT NULL,
   `item_confirmed_by` INT UNSIGNED NULL,
   PRIMARY KEY (`id`),
