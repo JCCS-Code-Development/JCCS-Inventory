@@ -88,7 +88,13 @@ export default function Orders() {
   const [users, setUsers]         = useState([])
   const [loading, setLoading]     = useState(true)
 
-  const [tab, setTab] = useState('pending') // 'ready' | 'itemsetup' | 'pending' | 'flagged' | 'closed' | 'all' | 'discrepancies'
+  // Consolidated from an earlier 7-tab split (ready/itemsetup/pending/
+  // flagged/closed/all/discrepancies) — Needs Action bundles everything that
+  // requires the Lead to actually do something (ready-to-order requests,
+  // item setup, open discrepancies) as labeled sub-sections; "All" is a
+  // search box instead of a standalone tab (see orderSearch below).
+  const [tab, setTab] = useState('needsAction') // 'needsAction' | 'inProgress' | 'closed'
+  const [orderSearch, setOrderSearch] = useState('')
 
   // ── Ready to Order (reviewed request tickets, still open) ──────────
   // The worklist the two Inventory Leads actually sit down with on
@@ -187,14 +193,17 @@ export default function Orders() {
       .then(d => setDiscrepancies(d.reports ?? []))
       .finally(() => setDiscrepanciesLoading(false))
   }
-  // Only fetch once the tab is actually opened, and again whenever its own filter changes.
+  // Fetched up front too (defaults to 'open'), same as loadReady above, so
+  // the Needs Action tab badge has a real count before it's ever opened.
+  useEffect(() => { loadDiscrepancies() }, []) // eslint-disable-line react-hooks/exhaustive-deps
+  // Re-fetch whenever Needs Action is (re-)opened, and whenever its own filter changes.
   useEffect(() => {
-    if (tab === 'discrepancies') loadDiscrepancies()
+    if (tab === 'needsAction') loadDiscrepancies()
     // eslint-disable-next-line react-hooks/exhaustive-deps -- loadDiscrepancies is stable enough for this
   }, [tab, discrepancyStatusFilter])
-  // Re-fetch whenever the Ready tab is (re-)opened, on top of the mount fetch above.
+  // Re-fetch whenever Needs Action is (re-)opened, on top of the mount fetch above.
   useEffect(() => {
-    if (tab === 'ready') loadReady()
+    if (tab === 'needsAction') loadReady()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tab])
 
@@ -426,10 +435,10 @@ export default function Orders() {
       if (fromRequests.length) {
         setFromRequests([])
         loadReady()
-        // The whole point of "send to Pending" — land where the order that
-        // was just created actually shows up, instead of staying on the
-        // Ready to Order tab looking at what's left of the queue.
-        setTab('pending')
+        // A freshly created order always starts in Item Setup — land on
+        // Needs Action so it's actually visible, instead of staying on the
+        // now-empty Ready to Order section.
+        setTab('needsAction')
       }
       setCreateOpen(false); load(); refreshBadges(true)
     } catch (err) {
@@ -500,44 +509,43 @@ export default function Orders() {
     catch (err) { toast.error(err?.response?.data?.error ?? t('orders.couldNotRemoveAttachment')) }
   }
 
-  // Three distinct buckets, not just open/closed:
-  //  - Pending  = still just waiting on the rest of the delivery — nothing
-  //               reported wrong yet.
-  //  - Flagged  = has an open discrepancy report (a refund/credit being
-  //               chased) — true whether the rest of the order is still
-  //               outstanding (a short shipment nothing more is coming for)
-  //               or it arrived in full otherwise. Either way it's not just
-  //               "waiting to arrive" anymore, so it doesn't belong in Pending.
-  //  - Closed   = arrived in full, nothing outstanding against it.
+  // An order with an open discrepancy isn't "just waiting to arrive" anymore
+  // (a refund/credit is being chased), so it's surfaced under Needs Action's
+  // Discrepancies section instead of In Progress, whether or not the rest of
+  // the order is still outstanding.
   const setupOrders = orders.filter(o => o.status === 'awaiting_item_setup')
   const isPending = (o) => (o.status === 'placed' || o.status === 'partially_received') && !o.has_open_discrepancy
-  const isFlagged = (o) => o.has_open_discrepancy
   const isClosed  = (o) => o.status === 'received' && !o.has_open_discrepancy
+  // Searching (In Progress / Closed only) looks across every order
+  // regardless of tab — this stands in for the old standalone "All" tab.
+  const search = orderSearch.trim().toLowerCase()
+  const matchesSearch = (o) => !search
+    || (o.order_number || '').toLowerCase().includes(search)
+    || (o.vendor_name || '').toLowerCase().includes(search)
   const visibleOrders = orders.filter((o) => {
-    if (tab === 'all') return true
-    if (tab === 'closed') return isClosed(o)
-    if (tab === 'flagged') return isFlagged(o)
-    return isPending(o)
+    if (!matchesSearch(o)) return false
+    if (search) return true
+    return tab === 'closed' ? isClosed(o) : isPending(o)
   })
 
   const reportsLabel = (n) => n === 1 ? t('orders.reportSingular') : t('orders.reportPlural')
+  const openDiscrepancyCount = discrepancies.filter(d => d.status === 'open').length
+  const needsActionCount = readyRequests.length + setupOrders.length + openDiscrepancyCount
 
   return (
     <div className="w-full">
       <PageHeader title={t('orders.title')} subtitle={t('orders.subtitle')}
         actions={
           <div className="flex gap-2">
-            {tab === 'ready' && readyRequests.length > 0 && (
+            {tab === 'needsAction' && readyRequests.length > 0 && (
               <Button variant="secondary" onClick={downloadReadyToOrderCsv}>{t('reports.exportCsv')}</Button>
             )}
-            {canRegister && tab !== 'discrepancies' && <Button onClick={openCreate}>{t('orders.newOrder')}</Button>}
+            {canRegister && <Button onClick={openCreate}>{t('orders.newOrder')}</Button>}
           </div>
         } />
 
-      <div className="flex gap-2 mb-4 flex-wrap">
-        {[['ready', t('orders.tabReady')], ['itemsetup', t('orders.tabItemSetup')], ['pending', t('orders.tabPending')], ['flagged', t('orders.tabFlagged')], ['closed', t('orders.tabClosed')], ['all', t('orders.tabAll')], ['discrepancies', t('orders.tabDiscrepancies')]].map(([val, label]) => {
-          const count = val === 'ready' ? readyRequests.length : val === 'itemsetup' ? setupOrders.length : 0
-          return (
+      <div className="flex gap-2 mb-4 flex-wrap items-center">
+        {[['needsAction', t('orders.tabNeedsAction'), needsActionCount], ['inProgress', t('orders.tabInProgress'), 0], ['closed', t('orders.tabClosed'), 0]].map(([val, label, count]) => (
           <button key={val} type="button" onClick={() => setTab(val)}
             className={`px-4 py-2 rounded-xl text-sm font-semibold transition-colors flex items-center gap-1.5 ${
               tab === val ? 'bg-brand-500 text-white' : 'bg-white border border-gray-200 text-gray-600 hover:border-gray-300'
@@ -551,12 +559,18 @@ export default function Orders() {
               </span>
             )}
           </button>
-          )
-        })}
+        ))}
+        {tab !== 'needsAction' && (
+          <input type="search" value={orderSearch} onChange={(e) => setOrderSearch(e.target.value)}
+            placeholder={t('orders.searchOrdersPlaceholder')}
+            className="ml-auto w-full sm:w-64 rounded-xl border border-gray-300 px-3 py-2 text-sm outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-100" />
+        )}
       </div>
 
-      {tab === 'ready' ? (
-        <>
+      {tab === 'needsAction' ? (
+        <div className="flex flex-col gap-6">
+        <div>
+          <h3 className="text-sm font-bold text-gray-800 px-1 mb-1">{t('orders.tabReady')}</h3>
           <p className="text-xs text-gray-500 px-1 pb-3">{t('orders.readyHint')}</p>
           {readyLoading ? (
             <div className="flex justify-center py-16"><Spinner size="lg" /></div>
@@ -618,9 +632,10 @@ export default function Orders() {
               })}
             </div>
           )}
-        </>
-      ) : tab === 'itemsetup' ? (
-        <>
+        </div>
+
+        <div>
+          <h3 className="text-sm font-bold text-gray-800 px-1 mb-1">{t('orders.tabItemSetup')}</h3>
           <p className="text-xs text-gray-500 px-1 pb-3">{t('orders.itemSetupHint')}</p>
           {setupOrders.length === 0 ? (
             <div className="bg-white rounded-2xl border border-gray-100 overflow-hidden">
@@ -635,9 +650,10 @@ export default function Orders() {
               ))}
             </div>
           )}
-        </>
-      ) : tab === 'discrepancies' ? (
-        <>
+        </div>
+
+        <div>
+          <h3 className="text-sm font-bold text-gray-800 px-1 mb-1">{t('orders.tabDiscrepancies')}</h3>
           <div className="flex gap-2 mb-4">
             {[['open', t('common.open')], ['resolved', t('common.resolved')], ['', t('orders.tabAll')]].map(([val, label]) => (
               <button key={val} type="button" onClick={() => setDiscrepancyStatusFilter(val)}
@@ -722,15 +738,16 @@ export default function Orders() {
               ))}
             </div>
           )}
-        </>
+        </div>
+        </div>
       ) : loading ? <div className="flex justify-center py-16"><Spinner size="lg" /></div> : (
         <div className="bg-white rounded-2xl border border-gray-100 overflow-hidden">
           {visibleOrders.length === 0 ? (
             <p className="text-center text-gray-400 py-16 text-sm">
               {orders.length === 0
                 ? t('orders.noOrdersYet')
-                : tab === 'pending' ? t('orders.nothingPending')
-                : tab === 'flagged' ? t('orders.nothingFlagged')
+                : search ? t('orders.noOrdersHere')
+                : tab === 'inProgress' ? t('orders.nothingPending')
                 : t('orders.noOrdersHere')}
             </p>
           ) : (
